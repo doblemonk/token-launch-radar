@@ -1,14 +1,14 @@
-// Token Launch Radar, model radar-2 (Node 22, standard library only).
+// Token Launch Radar, model radar-3 (Node 22, standard library only).
 //
-// implied value = TVL x 0.082 x growth multiplier x maturity multiplier, where 0.082 is the
-// median mcap/TVL of 47 live-token protocols in the sealed snapshot, calibrated at run time by
-// lib/model.ts. The program reads the snapshot from /input/snapshot.json (or --input <file|dir>),
-// scores every pre-token protocol, writes the ranked board (198 rows: 40 watchlist + 158 early)
-// to /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output.
-// Last it writes /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. Implied value is a model, not a promise: a protocol with no token records no token,
-// and a high implied value is a farm plan, not a valuation. Re-runs are deterministic: the same
-// snapshot writes the same /output byte for byte.
+// implied value = exp(intercept + slope x ln(TVL)), a log-log size curve fitted
+// at run time by lib/model.ts to the snapshot's live-token protocols (intercept 7.7881, slope
+// 0.4721 on the sealed snapshot, n = 119). The program reads the snapshot from /input/snapshot.json
+// (or --input <file|dir>), scores every pre-token protocol, writes the ranked board (198 rows:
+// 40 watchlist + 158 early) to /output/board.json, and copies this repository's dashboard/ and
+// screenshots/ to /output. Last it writes /output/dossier.json, the summary the judge reads, with
+// the vendored make.fun library. Implied value is a model, not a promise: a protocol with no token
+// records no token, and a high implied value is a farm plan, not a valuation. Re-runs are
+// deterministic: the same snapshot writes the same /output byte for byte.
 //
 // The dashboard is a static, fully offline page: dashboard/index.html, dashboard/app.css and
 // dashboard/app.js read /output/data.js, written here from the same board. Every row carries a
@@ -139,7 +139,7 @@ function formatUsd(value: number): string {
 
 /** Run summary on stdout: counts, outputs, top rows, and the model calibration. */
 function summarize(): void {
-  process.stdout.write(`token radar: model radar-2, base multiple ${board[0].model.base_multiple}\n`);
+  process.stdout.write(`token radar: model radar-3, log-log fit intercept ${radar.model.intercept} slope ${radar.model.slope} on ${radar.model.comp_count} live-token comps\n`);
   process.stdout.write(`token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n`);
   process.stdout.write(`token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`);
   const topTen = board.slice(0, 10).reduce((sum, row) => sum + row.implied_value_usd, 0);

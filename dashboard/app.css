@@ -206,6 +206,30 @@ tr.top2 .rank-badge, tr.top3 .rank-badge { background: var(--accent); border-col
 }
 .driver { margin-top: var(--s3); padding: var(--s3) var(--s4); background: var(--accent-soft); border-radius: var(--radius-control); font-size: 13.5px; color: var(--ink-soft); }
 
+/* Radar-3: fitted-curve strip, fit chart, out-of-sample table, rank ranges. */
+.fit-strip {
+  margin-top: var(--s4); padding: var(--s3) var(--s4); background: var(--surface);
+  border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-control);
+  font-size: 13.5px; color: var(--ink-soft); display: grid; gap: 2px;
+}
+.fit-strip b { color: var(--ink); }
+.fit-chart { margin-top: var(--s3); }
+.fit-chart svg { display: block; width: 100%; height: auto; }
+.fit-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); margin-top: var(--s2); font-size: 12.5px; color: var(--muted); }
+.fit-legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--accent); vertical-align: middle; margin-right: 6px; }
+.fit-legend i.flat { border-top: 2px dashed var(--faint); }
+.fit-legend i.dot { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--ink-soft); }
+.oos { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: var(--s2); }
+.oos th, .oos td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.oos th { color: var(--muted); font-size: 12px; }
+.oos td.num { text-align: right; }
+.oos td.win { font-weight: 650; color: var(--accent-deep); }
+.fit-note { margin-top: var(--s2); }
+.range-note { margin-top: var(--s3); }
+.net-line { margin-top: var(--s3); font-size: 13.5px; color: var(--muted); }
+.net-line b { color: var(--ink-soft); }
+.plan-sum span.verdict { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-deep); font-weight: 650; }
+
 @media (max-width: 980px) {
   .shell { padding: 0 var(--s4) var(--s6); }
   .top { margin: 0 calc(-1 * var(--s4)); padding: var(--s4); }
