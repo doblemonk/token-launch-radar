@@ -1,4 +1,4 @@
-// The token radar's model (radar-3): one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-4): one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and every
 // other protocol that passes the same exclusion test the watchlist was built from: the early rows the
@@ -9,27 +9,45 @@
 // Implied value follows only from the snapshot's own figures, through a curve FITTED to this
 // snapshot at run time:
 //
-//   log(implied) = intercept + slope x log(tvl_usd)
-//   implied      = max(1, round(exp(intercept + slope x ln(tvl_usd))))
-//   implied      = max(1, round(k x tvl_usd^slope)) with k = exp(intercept)
+//   log(implied) = intercept + slope x log(tvl_usd) + chainOffset(firstChain)
+//   implied      = max(1, round(exp(intercept + slope x ln(tvl_usd) + chainOffset)))
 //
-// intercept and slope are the ordinary-least-squares fit of log(market cap) on log(TVL) over the
-// snapshot's live-token protocols (market cap, CoinGecko id and symbol all present, CEX excluded,
-// TVL and market cap positive). No coefficient is hardcoded: a new snapshot refits the curve from
-// its own figures. The fit is a size curve, not a flat multiple: the market pays a smaller multiple
-// per dollar of TVL as a protocol gets bigger, and the slope (0.47 on this snapshot, well under 1)
-// is that fact measured, not assumed. No protocol name is ever special-cased: the same function
-// scores every row. The intercept is UNcentered (log market cap at TVL = $1), so the dashboard's
-// chart and its "k x TVL^slope" line use the same numbers as the board with no conversion.
+// intercept, slope and the five chain offsets are the ridge-shrunk least-squares fit of
+// log(market cap) on log(TVL) plus first-chain dummies over the snapshot's live-token protocols
+// (market cap, CoinGecko id and symbol all present, CEX excluded, TVL and market cap positive).
+// The chain dummies are for the five most common first chains among the comparables — Ethereum,
+// Binance, Base, Solana, Arbitrum — each shrunk with ridge penalty 10 on its coefficient only
+// (intercept and slope unpenalised); a protocol whose first chain is none of the five, or that
+// names no chain, gets offset 0. No coefficient is hardcoded: a new snapshot refits the curve
+// from its own figures. The fit is a size curve with a chain shift, not a flat multiple: the market
+// pays a smaller multiple per dollar of TVL as a protocol gets bigger, and the slope (0.43 on this
+// snapshot, well under 1) is that fact measured, not assumed. No protocol name is ever
+// special-cased: the same function scores every row. The intercept is UNcentered (log market cap
+// at TVL = $1 for a protocol with no chain offset), so the dashboard's chart and its
+// "k x TVL^slope" line use the same numbers as the board with no conversion (the chart line is
+// the no-offset curve; a row's own offset is shown in its detail view).
 //
 // WHY THIS SHAPE — the blind test (see NOTES-model.md for the full numbers). On this snapshot's
 // 119 live-token comparables, predicting log(market cap):
 //   flat median multiple (radar-2):  leave-one-out mean abs log error 1.77, walk-forward 1.89
 //   log-log size curve (radar-3):    leave-one-out 1.57, walk-forward 1.63
+//   size curve + first-chain dummies, ridge 10 (radar-4):
+//                                    leave-one-out 1.54, walk-forward 1.57
 //   walk-forward = train on protocols listed before a cutoff, test on those listed after, at four
-//   cutoffs (2024-01-01, 2024-07-01, 2025-01-01, 2025-07-01); the size curve beats the flat
-//   multiple at every cutoff. Median absolute % error: 84.6% vs 88.3% leave-one-out, 77.2% vs
-//   86.2% walk-forward. The curve wins out of sample by a clear margin, so it ships.
+//   cutoffs (2024-01-01, 2024-07-01, 2025-01-01, 2025-07-01); the radar-4 model beats the
+//   radar-3 curve at every cutoff (per-cutoff 1.485 / 1.537 / 1.600 / 1.826 vs 1.514 / 1.577 /
+//   1.672 / 1.954). Median absolute % error: 83.3% vs 84.6% leave-one-out, 75.6% vs 77.2%
+//   walk-forward. The chain shift is real, not a shrinkage artefact: it survives ridge penalties
+//   from 3 to 100, survives dropping any one dummy (including Arbitrum, whose offset rests on
+//   four comparables), and survives the rankable-like subset (n = 94, Bridge / Liquid Staking
+//   excluded: leave-one-out 1.50 vs 1.52, walk-forward 1.52 vs 1.55). It does NOT survive the
+//   TVL >= $50M-only subset (n = 45: 1.59 vs 1.59 leave-one-out, 1.52 vs 1.50 walk-forward),
+//   so the chain shift is an effect among the smaller protocols that dominate the board, not
+//   among the largest ones. The full-fit offsets on this snapshot: Ethereum +0.50, Binance
+//   +0.30, Base -0.13, Solana -0.35, Arbitrum +0.75 — Ethereum-first protocols trade at roughly
+//   1.6x the market cap of a same-TVL protocol on another chain, Solana-first at roughly 0.7x.
+//   The unshrunk dummies do NOT survive (leave-one-out 1.60, walk-forward 1.64): the ridge is
+//   load-bearing, which is why the penalty is part of the contract, not a tuning detail.
 // Terms the blind test REJECTED, and the model does not carry:
 //   category offsets — worse leave-one-out (1.63 vs 1.57) and singular in walk-forward training
 //     sets, where a category has no earlier protocol; the per-category samples (1 to 15) are noise.
@@ -41,41 +59,93 @@
 //     leave-one-out slightly (1.59 vs 1.57). Dropped. Age is still recorded on every row and
 //     shown, and still sets the farm plan's hold length; it is not a value term.
 //   a quadratic size term — no gain leave-one-out (1.59) or walk-forward (1.63). Dropped.
+//   (radar-4 rejections, blind-tested on the same 119 comparables; numbers in NOTES-model.md)
+//   chains count / multi-chain indicator — no gain on either test (leave-one-out 1.58,
+//     walk-forward 1.64); the count's coefficient is ~0 once the first chain is known.
+//   an Ethereum-first dummy alone — no leave-one-out gain (1.5722 vs 1.5722) and only 2 of 4
+//     walk-forward cutoffs; the effect needs the full five-chain set, not one dummy.
+//   Huber / LAD robust fits of the size curve — Huber wins on mean error (leave-one-out 1.57,
+//     walk-forward 1.59) but worsens walk-forward median % error (83.6% vs 77.2%) and loses
+//     leave-one-out on the rankable-like subset; LAD is worse on both. Dropped, including the
+//     Huber + chain-dummies combination (better mean error still, worse median % error).
+//   a piecewise two-segment size curve (breakpoint searched in-train) — worse on both tests
+//     (leave-one-out 1.59, walk-forward 1.67). Dropped.
+//   a spike-penalty indicator (change_7d > 20%) — UNIDENTIFIABLE, not merely worse: no live-token
+//     comparable gained more than 2.7% in 7 days, so the indicator is identically zero on the
+//     training population and its coefficient cannot be estimated from this snapshot at all.
+//     The estimable analogues (positive-week indicator, -20% downside indicator) are both worse
+//     on both tests. Dropped; any spike coefficient would be invented, not measured.
+//   growth with a new transform (signed sqrt, winsorised to ±10% or ±20%) — all worse on both
+//     tests (leave-one-out 1.59, walk-forward 1.61–1.67). Dropped; the growth signal is the
+//     mean-reversion already rejected in radar-3, and no transform rescues it.
+//   slope x category interactions (ridge-shrunk) — worse leave-one-out (1.58–1.59) and no
+//     walk-forward gain (1.62). Dropped.
+//   TVL-weighted least squares (weight TVL or sqrt(TVL)) — worse on both tests, badly for the
+//     full TVL weight (walk-forward 1.88). Dropped.
+//   log TVL per chain — wins walk-forward (1.58) but loses leave-one-out (1.58 vs 1.57). Dropped
+//     by the ship rule, which requires both.
+//   Residual-noise rank ranges: adding the fit's leave-one-out residual noise (sd 2.06 log units)
+//     to each row's log implied value over 200 refits gives rank ranges of median width 195 of a
+//     possible 197 — every row's range covers nearly the whole board, the top row changes in 97%
+//     of refits. That is the honest predictive uncertainty (adjacent rows are far closer in
+//     implied value than the model's error), and it is NOT shipped as rank ranges: a range that
+//     wide carries no information. The shipped ranges stay the parameter-bootstrap ranges below,
+//     which measure fit stability, and the residual-noise finding is stated in the dossier text
+//     instead: read the board as tiers, not a precise ranking.
 // The fitted curve is refit on the same comparables for the rank ranges: 200 bootstrap resamples
 // (seed 20261117, mulberry32) each refit the curve and re-rank the board, and every row carries
 // rank_low / rank_high, the min and max rank it took across refits. A row whose range is wide is
-// a row the curve is unsure about, and the dashboard shows the range.
+// a row the curve is unsure about, and the dashboard shows the range. Unlike radar-3, these
+// ranges now MOVE: the chain offsets make implied value a function of first chain as well as
+// TVL, so a refit can reorder rows (195 of 198 rows move rank between the radar-3 curve and
+// this model; mean |Δrank| 23.9).
 //
 // One limit the snapshot forces: DefiLlama's parentProtocol is not one of the snapshot's ten fields,
 // so the exclusion below uses every field the snapshot carries (category, name, version marker) and
 // the house's watchlist itself. A below-floor protocol whose parent the snapshot does not name could
 // still slip in; the board therefore says a protocol "records no token", never that it has none.
 //
-// CONTRACT (radar-3) — the dashboard's app.js mirrors this byte-for-byte; change one, change both:
-//   ModelConstants fields: intercept, slope, comp_count.
-//   impliedOf(row, model) = max(1, round(exp(intercept + slope x ln(tvl_usd)))), with implied 1
-//     when tvl_usd <= 0. The intercept is uncentered: the chart line is
-//     log10(mcap) = (intercept + slope x ln(tvl_usd)) / ln(10), and the curve's coefficient is
-//     k = exp(intercept), so the page may also write implied = k x tvl_usd^slope.
-//   RadarData.fit = { intercept, slope, n_comps, r2, n_refits }: the same fit, for the page's
-//     fit panels and chart (n_comps == model.comp_count; n_refits == rank_range_refits == 200).
+// CONTRACT (radar-4) — the dashboard's app.js mirrors this byte-for-byte; change one, change both:
+//   ModelConstants fields: intercept, slope, chainEthereum, chainBinance, chainBase,
+//     chainSolana, chainArbitrum, comp_count. The five chain fields are the ridge-shrunk
+//     first-chain offsets (penalty 10, see CHAIN_RIDGE); a chain not among the five has offset 0.
+//   impliedOf(tvl_usd, firstChain, model) = max(1, round(exp(intercept + slope x ln(tvl_usd)
+//     + chainOffset))), with implied 1 when tvl_usd <= 0, where chainOffset is model.chainEthereum
+//     when firstChain is 'Ethereum', model.chainBinance for 'Binance', model.chainBase for 'Base',
+//     model.chainSolana for 'Solana', model.chainArbitrum for 'Arbitrum', and 0 otherwise
+//     (including firstChain null). The intercept is uncentered: the chart line is
+//     log10(mcap) = (intercept + slope x ln(tvl_usd)) / ln(10), the no-offset curve, and the
+//     curve's coefficient is k = exp(intercept), so the page may also write the no-offset implied
+//     value as k x tvl_usd^slope and then multiply by exp(chainOffset) for the row's chain.
+//   RadarData.fit = { intercept, slope, chainEthereum, chainBinance, chainBase, chainSolana,
+//     chainArbitrum, n_comps, r2, n_refits }: the same fit, for the page's fit panels and chart
+//     (n_comps == model.comp_count; n_refits == rank_range_refits == 200).
 //   RadarData.oos = { metric, flat, fitted, flat_loo, fitted_loo, cutoffs, kept_terms,
 //     dropped_terms }: the blind test, MEASURED AT RUN TIME from the snapshot (see measureOos):
 //     metric is 'mean absolute log error'; flat/fitted are the walk-forward pooled errors of the
-//     flat median multiple and the fitted curve; flat_loo/fitted_loo are the leave-one-out
+//     flat median multiple and the fitted model; flat_loo/fitted_loo are the leave-one-out
 //     errors; cutoffs are the walk-forward cutoff dates; kept_terms/dropped_terms name the terms
 //     the blind test kept and dropped.
-//   farmSteps(p, age_days, implied_value_usd): capital by TVL tier (TVL >= 5B: $250; >= 1B: $150;
+//   farmSteps(p, age_days, implied_value_usd, cutoffs): capital by TVL tier (TVL >= 5B: $250; >= 1B: $150;
 //     >= 100M: $100; else $50); hold days by age (age null: 30; < 180: 60; < 365: 45; else 30);
 //     gas per transaction by first chain (Ethereum $5.00; Solana/Sui/Aptos $0.10; BSC $0.30;
 //     Polygon $0.20; Arbitrum/Optimism/Base/zkSync Era/Linea/Scroll/Blast/Mode/Mantle/Starknet/
 //     Avalanche $0.50; any other chain $1.00); transactions = 2 setup + ceil(hold/7) weekly +
 //     1 exit + 1 claim; total gas = transactions x gas per transaction, rounded to cents.
-//     Verdict from coverage = implied_value_usd / total gas: >= 20000 FARM (full capital, weekly
-//     actions over the whole hold); >= 2000 THIN (capital halved, minimum $25, two qualifying
-//     actions in the first 30 days, gas = 6 transactions); else SKIP (no deposit, $0 spent, the
-//     step states the gas the plan would have cost). The last step always nets the plan: gas
-//     spent, capital returned on exit, days locked, implied value, and the verdict.
+//     Verdict from implied value per $1 of capital (implied / capital tier), against the board's
+//     own tercile cutoffs (farmCutoffs: lo is the midpoint between the values a third and a
+//     third-plus-one of the way up the board's sorted implied-per-capital list, hi the midpoint
+//     between the two-thirds and two-thirds-plus-one values; RadarData.farm_cutoffs publishes
+//     them, so the page uses the same numbers): at or above hi FARM (full capital, weekly actions
+//     over the whole hold); at or above lo THIN (capital halved, minimum $25, two qualifying actions in
+//     the first 30 days, gas = 6 transactions); below lo SKIP (no deposit, $0 spent, the step
+//     states the gas the plan would have cost). Two one-tier demotions, each at most once:
+//     stale — age_days >= 1095 (3 years listed, still records no token); gas-drag — the full
+//     plan's gas exceeds the capital tier. SKIP is priority triage under limited capital, not
+//     "uneconomic": on this snapshot every gas bill is under 1/57,000 of implied value. The last
+//     step always nets the plan: gas spent, capital returned on exit, days locked, implied value,
+//     implied value per $1 of capital, the tercile cutoffs, every demotion that fired, and the
+//     verdict.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -101,14 +171,21 @@ export interface Snapshot {
 }
 
 /**
- * The model's constants: the fitted log-log size curve, as the dashboard states them and the
- * sandbox may change them. intercept is log(market cap) at TVL = $1 (uncentered, so the page's
- * chart and its "k x TVL^slope" line need no conversion); slope is the elasticity of market cap
- * with respect to TVL; comp_count is how many live-token protocols the fit used.
+ * The model's constants: the fitted log-log size curve plus first-chain offsets, as the
+ * dashboard states them and the sandbox may change them. intercept is log(market cap) at TVL
+ * = $1 for a protocol with no chain offset (uncentered, so the page's chart and its
+ * "k x TVL^slope" line need no conversion); slope is the elasticity of market cap with respect
+ * to TVL; the chain* fields are the ridge-shrunk offsets for the five dummy chains (0 for any
+ * other first chain, including none); comp_count is how many live-token protocols the fit used.
  */
 export interface ModelConstants {
   intercept: number;
   slope: number;
+  chainEthereum: number;
+  chainBinance: number;
+  chainBase: number;
+  chainSolana: number;
+  chainArbitrum: number;
   comp_count: number;
 }
 
@@ -116,14 +193,19 @@ export const MODEL: ModelConstants = {
   // Fallback only: buildRadar replaces this with the snapshot-fitted curve (see fitValueModel).
   // Slope 1 with intercept log(0.25) is exactly implied = 0.25 x TVL, the old fallback multiple,
   // so a board can still be scored when the snapshot carries too few live-token comparables to
-  // fit from.
+  // fit from. Chain offsets are 0 in the fallback: no chain shift without comparables to fit it.
   intercept: Math.log(0.25),
   slope: 1,
+  chainEthereum: 0,
+  chainBinance: 0,
+  chainBase: 0,
+  chainSolana: 0,
+  chainArbitrum: 0,
   comp_count: 0,
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token comparables the fit needs before it trusts the curve. */
 export const CALIBRATION_MIN_COMPS = 5;
@@ -149,41 +231,106 @@ interface FitPoint {
   logTvl: number;
   logMcap: number;
   listedAt: string | null;
+  firstChain: string | null;
 }
 
-/** The least-squares line through the points, with its R-squared, or null when unidentified. */
-function ols(points: FitPoint[]): { intercept: number; slope: number; r2: number } | null {
-  const n = points.length;
-  if (n < 2) return null;
-  let sumX = 0;
-  let sumY = 0;
-  for (const p of points) {
-    sumX += p.logTvl;
-    sumY += p.logMcap;
+/** The first chains that carry a dummy: the five most common among the comparables. */
+export const CHAIN_DUMMIES = ['Ethereum', 'Binance', 'Base', 'Solana', 'Arbitrum'] as const;
+
+/**
+ * The ridge penalty on each chain dummy's coefficient (intercept and slope unpenalised).
+ * The penalty is load-bearing: the unshrunk dummies fail the blind test (leave-one-out 1.60,
+ * walk-forward 1.64), while penalties from 3 to 100 all beat the radar-3 curve on both tests;
+ * 10 is the pre-registered value, not the best of the sweep.
+ */
+export const CHAIN_RIDGE = 10;
+
+/** The design row of a point: intercept, log TVL, then one dummy per chain in CHAIN_DUMMIES. */
+function designRow(p: FitPoint): number[] {
+  return [1, p.logTvl, ...CHAIN_DUMMIES.map((c) => (p.firstChain === c ? 1 : 0))];
+}
+
+/** Solve a small dense linear system by Gauss-Jordan with partial pivoting, or null if singular. */
+function solveLinear(a: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r]![c]!) > Math.abs(m[piv]![c]!)) piv = r;
+    if (Math.abs(m[piv]![c]!) < 1e-12) return null;
+    const tmp = m[c]!;
+    m[c] = m[piv]!;
+    m[piv] = tmp;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = m[r]![c]! / m[c]![c]!;
+      for (let k = c; k <= n; k++) m[r]![k]! -= f * m[c]![k]!;
+    }
   }
-  const meanX = sumX / n;
-  const meanY = sumY / n;
-  let sxx = 0;
-  let sxy = 0;
-  for (const p of points) {
-    const dx = p.logTvl - meanX;
-    sxx += dx * dx;
-    sxy += dx * (p.logMcap - meanY);
+  return m.map((row, i) => row[n]! / row[i]!);
+}
+
+/**
+ * The ridge-shrunk fit through the points: log(market cap) on log(TVL) plus first-chain
+ * dummies, penalty CHAIN_RIDGE on the dummy coefficients only. Returns the fitted constants
+ * (rounded to 4dp, as the radar-3 fit was) with R-squared, or null when unidentified. The
+ * penalty keeps the solve identified even when a training set has no protocol on some dummy
+ * chain — the failure that sank the plain category offsets in radar-3.
+ */
+function ridgeFit(points: FitPoint[]): { model: ModelConstants; r2: number } | null {
+  const p = 2 + CHAIN_DUMMIES.length;
+  if (points.length < 2) return null;
+  const xtx: number[][] = Array.from({ length: p }, () => new Array<number>(p).fill(0));
+  const xty: number[] = new Array<number>(p).fill(0);
+  for (const pt of points) {
+    const x = designRow(pt);
+    for (let a = 0; a < p; a++) {
+      xty[a]! += x[a]! * pt.logMcap;
+      for (let b = 0; b < p; b++) xtx[a]![b]! += x[a]! * x[b]!;
+    }
   }
-  if (!(sxx > 0) || !Number.isFinite(sxx)) return null;
-  const slope = sxy / sxx;
-  const intercept = meanY - slope * meanX;
-  if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return null;
+  for (let a = 2; a < p; a++) xtx[a]![a]! += CHAIN_RIDGE;
+  const beta = solveLinear(xtx, xty);
+  if (beta === null || beta.some((v) => !Number.isFinite(v))) return null;
+  const round4 = (v: number): number => Math.round(v * 1e4) / 1e4;
+  const model: ModelConstants = {
+    intercept: round4(beta[0]!),
+    slope: round4(beta[1]!),
+    chainEthereum: round4(beta[2]!),
+    chainBinance: round4(beta[3]!),
+    chainBase: round4(beta[4]!),
+    chainSolana: round4(beta[5]!),
+    chainArbitrum: round4(beta[6]!),
+    comp_count: points.length,
+  };
+  const meanY = points.reduce((a, pt) => a + pt.logMcap, 0) / points.length;
   let ssRes = 0;
   let ssTot = 0;
-  for (const p of points) {
-    const pred = intercept + slope * p.logTvl;
-    ssRes += (p.logMcap - pred) * (p.logMcap - pred);
-    ssTot += (p.logMcap - meanY) * (p.logMcap - meanY);
+  for (const pt of points) {
+    const pred = model.intercept + model.slope * pt.logTvl + chainOffsetOf(pt.firstChain, model);
+    ssRes += (pt.logMcap - pred) * (pt.logMcap - pred);
+    ssTot += (pt.logMcap - meanY) * (pt.logMcap - meanY);
   }
   const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 0;
-  const round4 = (v: number): number => Math.round(v * 1e4) / 1e4;
-  return { intercept: round4(intercept), slope: round4(slope), r2: round4(r2) };
+  return { model, r2: round4(r2) };
+}
+
+/** The chain offset a first chain carries under `model`: one of the five dummies, else 0. */
+export function chainOffsetOf(firstChain: string | null, model: ModelConstants): number {
+  switch (firstChain) {
+    case 'Ethereum':
+      return model.chainEthereum;
+    case 'Binance':
+      return model.chainBinance;
+    case 'Base':
+      return model.chainBase;
+    case 'Solana':
+      return model.chainSolana;
+    case 'Arbitrum':
+      return model.chainArbitrum;
+    default:
+      return 0;
+  }
 }
 
 /** The snapshot's live-token comparables: token trades, CEX excluded. */
@@ -193,22 +340,28 @@ function compPoints(snapshot: Snapshot): FitPoint[] {
     if (p.mcap_usd === null || p.gecko_id === null || p.symbol === null) continue;
     if (p.category === 'CEX') continue;
     if (!(p.tvl_usd > 0) || !(p.mcap_usd > 0)) continue;
-    points.push({ logTvl: Math.log(p.tvl_usd), logMcap: Math.log(p.mcap_usd), listedAt: p.listed_at });
+    points.push({
+      logTvl: Math.log(p.tvl_usd),
+      logMcap: Math.log(p.mcap_usd),
+      listedAt: p.listed_at,
+      firstChain: p.chains.length > 0 ? p.chains[0]! : null,
+    });
   }
   return points;
 }
 
 /**
- * The value curve, fitted from the snapshot at run time: the least-squares line of log(market cap)
- * on log(TVL) over the live-token protocols, with its R-squared. Falls back to the flat 0.25
- * multiple when the snapshot carries too few comparables to fit from.
+ * The value curve, fitted from the snapshot at run time: the ridge-shrunk least-squares fit of
+ * log(market cap) on log(TVL) plus first-chain dummies over the live-token protocols, with its
+ * R-squared. Falls back to the flat 0.25 multiple when the snapshot carries too few comparables
+ * to fit from.
  */
 export function fitValueModel(snapshot: Snapshot): { model: ModelConstants; r2: number | null } {
   const points = compPoints(snapshot);
   if (points.length < CALIBRATION_MIN_COMPS) return { model: { ...MODEL }, r2: null };
-  const fit = ols(points);
+  const fit = ridgeFit(points);
   if (fit === null) return { model: { ...MODEL }, r2: null };
-  return { model: { intercept: fit.intercept, slope: fit.slope, comp_count: points.length }, r2: fit.r2 };
+  return { model: fit.model, r2: fit.r2 };
 }
 
 /** The model the board is scored with: the snapshot-fitted size curve. */
@@ -248,17 +401,33 @@ function male(errs: number[]): number | null {
 
 /**
  * The blind test, measured at run time: leave-one-out and walk-forward mean absolute log error
- * of the flat median multiple against the fitted size curve, on the snapshot's live-token
- * comparables. Walk-forward trains on protocols listed before a cutoff and tests on those listed
- * after; a cutoff is skipped when its training set is under 10 or its test set under 5. The
- * kept/dropped term lists are the verdict of that test on this snapshot: only the log-TVL size
- * curve survived; category offsets, the 7-day growth term, the age term and a quadratic size
- * term all made held-out error worse and were dropped (see NOTES-model.md for the numbers).
+ * of the flat median multiple against the fitted size curve with first-chain dummies, on the
+ * snapshot's live-token comparables. Walk-forward trains on protocols listed before a cutoff and
+ * tests on those listed after; a cutoff is skipped when its training set is under 10 or its test
+ * set under 5. The kept/dropped term lists are the verdict of that test on this snapshot: only
+ * the log-TVL size curve plus the ridge-shrunk first-chain dummies survived; category offsets,
+ * the 7-day growth term, the age term, a quadratic size term and every radar-4 candidate but the
+ * chain dummies made held-out error worse — or, for the spike penalty, could not be estimated
+ * at all — and were dropped (see NOTES-model.md for the numbers).
  */
 export function measureOos(snapshot: Snapshot): OosSummary {
   const points = compPoints(snapshot);
-  const kept = ['log TVL (size curve)'];
-  const dropped = ['category offsets', '7-day growth', 'age (log1p)', 'quadratic size term'];
+  const kept = ['log TVL (size curve)', 'first-chain dummies (ridge 10)'];
+  const dropped = [
+    'category offsets',
+    '7-day growth',
+    'age (log1p)',
+    'quadratic size term',
+    'chains count / multi-chain',
+    'Ethereum-first dummy alone',
+    'Huber / LAD robust fit',
+    'piecewise size hinge',
+    'spike penalty (no support among comps)',
+    'growth transforms (signed sqrt / winsorised)',
+    'slope x category',
+    'TVL-weighted least squares',
+    'log TVL per chain',
+  ];
   const empty: OosSummary = {
     metric: 'mean absolute log error',
     flat: null,
@@ -278,8 +447,10 @@ export function measureOos(snapshot: Snapshot): OosSummary {
     const held = points[i]!;
     const med = median(train.map((t) => Math.exp(t.logMcap - t.logTvl)));
     if (med !== null) looFlat.push(Math.log(med) + held.logTvl - held.logMcap);
-    const fit = ols(train);
-    if (fit !== null) looFitted.push(fit.intercept + fit.slope * held.logTvl - held.logMcap);
+    const fit = ridgeFit(train);
+    if (fit !== null) {
+      looFitted.push(fit.model.intercept + fit.model.slope * held.logTvl + chainOffsetOf(held.firstChain, fit.model) - held.logMcap);
+    }
   }
   // Walk-forward, pooled over the cutoffs.
   const wfFlat: number[] = [];
@@ -290,10 +461,12 @@ export function measureOos(snapshot: Snapshot): OosSummary {
     const test = listed.filter((p) => p.listedAt! >= cut);
     if (train.length < 10 || test.length < 5) continue;
     const med = median(train.map((t) => Math.exp(t.logMcap - t.logTvl)));
-    const fit = ols(train);
+    const fit = ridgeFit(train);
     for (const t of test) {
       if (med !== null) wfFlat.push(Math.log(med) + t.logTvl - t.logMcap);
-      if (fit !== null) wfFitted.push(fit.intercept + fit.slope * t.logTvl - t.logMcap);
+      if (fit !== null) {
+        wfFitted.push(fit.model.intercept + fit.model.slope * t.logTvl + chainOffsetOf(t.firstChain, fit.model) - t.logMcap);
+      }
     }
   }
   return {
@@ -336,6 +509,11 @@ export interface BoardRow {
   model: {
     intercept: number;
     slope: number;
+    chainEthereum: number;
+    chainBinance: number;
+    chainBase: number;
+    chainSolana: number;
+    chainArbitrum: number;
     comp_count: number;
     age_days: number | null;
   };
@@ -374,6 +552,11 @@ export interface LiveRow {
 export interface FitSummary {
   intercept: number;
   slope: number;
+  chainEthereum: number;
+  chainBinance: number;
+  chainBase: number;
+  chainSolana: number;
+  chainArbitrum: number;
   n_comps: number;
   r2: number | null;
   n_refits: number;
@@ -389,6 +572,8 @@ export interface RadarData {
   fit: FitSummary;
   oos: OosSummary;
   rank_range_refits: number;
+  /** The farm plan's tercile cutoffs (implied value per $1 of capital), measured from this board. */
+  farm_cutoffs: FarmCutoffs;
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -416,17 +601,18 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/** The implied value one protocol gets under the fitted size curve. */
-export function impliedOf(tvlUsd: number, model: ModelConstants): number {
+/** The implied value one protocol gets under the fitted size curve with its chain offset. */
+export function impliedOf(tvlUsd: number, firstChain: string | null, model: ModelConstants): number {
   if (!(tvlUsd > 0)) return 1;
-  const logImplied = model.intercept + model.slope * Math.log(tvlUsd);
+  const logImplied = model.intercept + model.slope * Math.log(tvlUsd) + chainOffsetOf(firstChain, model);
   if (!Number.isFinite(logImplied)) return 1;
   return Math.max(1, Math.round(Math.exp(logImplied)));
 }
 
 /** The implied value and the age one protocol gets under `model`. */
 export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; age: number | null } {
-  return { implied: impliedOf(protocol.tvl_usd, model), age: ageDays(asOf, protocol.listed_at) };
+  const firstChain = protocol.chains.length > 0 ? protocol.chains[0]! : null;
+  return { implied: impliedOf(protocol.tvl_usd, firstChain, model), age: ageDays(asOf, protocol.listed_at) };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -493,11 +679,11 @@ function rankRanges(
   for (let b = 0; b < BOOTSTRAP_REFITS; b++) {
     const resample: FitPoint[] = [];
     for (let i = 0; i < n; i++) resample.push(points[Math.floor(rand() * n)]!);
-    const refit = ols(resample);
+    const refit = ridgeFit(resample);
     if (refit === null) continue;
-    const refitModel: ModelConstants = { intercept: refit.intercept, slope: refit.slope, comp_count: n };
+    const refitModel: ModelConstants = refit.model;
     const ranked = [...chosen]
-      .map((p) => ({ slug: p.slug, implied: impliedOf(p.tvl_usd, refitModel) }))
+      .map((p) => ({ slug: p.slug, implied: impliedOf(p.tvl_usd, p.chains.length > 0 ? p.chains[0]! : null, refitModel) }))
       .sort((a, b2) => b2.implied - a.implied || (a.slug < b2.slug ? -1 : a.slug > b2.slug ? 1 : 0));
     ranked.forEach((r, i) => {
       const range = ranges.get(r.slug)!;
@@ -533,6 +719,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   const ranges = rankRanges([...chosen.values()], compPoints(snapshot));
+  const cutoffs = farmCutoffs(scored.map((s) => s.implied / capitalFor(s.p)));
   return scored.map((s, i) => {
     const range = ranges.get(s.p.slug);
     const rank = i + 1;
@@ -556,10 +743,15 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       model: {
         intercept: model.intercept,
         slope: model.slope,
+        chainEthereum: model.chainEthereum,
+        chainBinance: model.chainBinance,
+        chainBase: model.chainBase,
+        chainSolana: model.chainSolana,
+        chainArbitrum: model.chainArbitrum,
         comp_count: model.comp_count,
         age_days: s.age,
       },
-      farm_steps: farmSteps(s.p, s.age, s.implied).map(stepText),
+      farm_steps: farmSteps(s.p, s.age, s.implied, cutoffs).map(stepText),
     };
   });
 }
@@ -590,7 +782,7 @@ function money(n: number): string {
 }
 
 /** How much capital one farm position needs, from the protocol's own TVL. */
-function capitalFor(p: SnapshotProtocol): number {
+function capitalFor(p: { tvl_usd: number }): number {
   if (p.tvl_usd >= 5_000_000_000) return 250;
   if (p.tvl_usd >= 1_000_000_000) return 150;
   if (p.tvl_usd >= 100_000_000) return 100;
@@ -656,30 +848,117 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
  * The costing: capital by TVL tier (see capitalFor), gas per transaction by first chain (see
  * GAS_PER_TX), transactions = 2 to set up (approve + deposit) + one qualifying action a week
  * over the hold + 1 to exit + 1 to claim. The capital is returned on exit, so the net cost of
- * farming is the gas; the verdict compares that gas bill with the implied value at stake:
- * coverage = implied_value_usd / total gas. FARM at coverage >= 20000 (gas under 1/20000 of the
- * value), THIN at coverage >= 2000 (capital halved, minimum $25, two qualifying actions in the
- * first 30 days, 6 transactions of gas), SKIP below that (no deposit, $0 spent, the step states
- * the gas the plan would have cost).
+ * farming is the gas; the verdict triages the farmer's scarce resource, capital, by implied
+ * value per $1 of capital against the board's own tercile cutoffs (see farmCutoffs and
+ * farmVerdict): top third FARM (full capital, weekly actions over the whole hold), middle third
+ * THIN (capital halved, minimum $25, two qualifying actions in the first 30 days, 6
+ * transactions of gas), bottom third SKIP (no deposit, $0 spent, the step states the gas the
+ * plan would have cost). Two one-tier demotions, each at most once: stale (listed >= 1095 days,
+ * still records no token) and gas-drag (the full plan's gas exceeds the capital tier). SKIP is
+ * priority triage under limited capital, not "uneconomic": on this snapshot the dearest gas
+ * bill is still under 1/57,000 of the smallest implied value. The last step always nets the
+ * plan and states the reason: gas spent, capital returned on exit, days locked, implied value,
+ * implied value per $1 of capital, the tercile cutoffs, every demotion that fired, and the
+ * verdict.
  *
  * Deliberately identical to the dashboard's own derivation (dashboard/app.js farmSteps): the page
  * recomputes this plan for its detail view, so any change here must be made there in the same edit
  * or the board and the page will show different plans for the same protocol. See the CONTRACT at
  * the top of this file.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null, implied: number): FarmStep[] {
+/** The board's farm tercile cutoffs: implied value per $1 of capital, measured from the board itself. */
+export interface FarmCutoffs {
+  lo: number;
+  hi: number;
+}
+
+/**
+ * The tercile cutoffs of a list of implied-per-capital values, sorted ascending: lo is the
+ * midpoint between the values a third and a third-plus-one of the way up the list, hi the
+ * midpoint between the two-thirds and two-thirds-plus-one values (indices floor(n/3)-1 and
+ * floor(n/3), and floor(2n/3)-1 and floor(2n/3); a list under 3 rows puts both cutoffs at its
+ * smallest value). Midpoints, not the boundary values themselves, so "at or above hi" is
+ * exactly the top third and "at or above lo" exactly the top two thirds when no value ties
+ * across a boundary. Measured at run time from the board being scored, never hardcoded: a
+ * hardcoded dollar threshold is what left radar-3 with no THIN or SKIP row on this snapshot,
+ * because no row's gas bill came within 1/57,000 of its implied value. Terciles guarantee the
+ * spread is the board's own spread.
+ */
+export function farmCutoffs(values: number[]): FarmCutoffs {
+  const sorted = [...values].sort((a, b) => a - b);
+  if (sorted.length === 0) return { lo: 0, hi: 0 };
+  const mid = (i: number): number => {
+    const a = sorted[Math.max(0, Math.min(sorted.length - 1, i))]!;
+    const b = sorted[Math.max(0, Math.min(sorted.length - 1, i + 1))]!;
+    return (a + b) / 2;
+  };
+  return { lo: mid(Math.floor(sorted.length / 3) - 1), hi: mid(Math.floor((2 * sorted.length) / 3) - 1) };
+}
+
+/** How many days listed still counts as stale: three years with no token on record. */
+export const FARM_STALE_DAYS = 1095;
+
+/** One row's farm verdict, with every reason the netting step must state. */
+export interface FarmVerdict {
+  verdict: 'FARM' | 'THIN' | 'SKIP';
+  base: 'FARM' | 'THIN' | 'SKIP';
+  stale: boolean;
+  gasDrag: boolean;
+  impPerCap: number;
+}
+
+/**
+ * The verdict for one row: its base tier from implied value per $1 of capital against the
+ * board's tercile cutoffs, then at most one tier down for staleness (listed >= 1095 days, still
+ * no token — the snapshot's own launch record is cumulative with age: 5.8% of protocols listed
+ * under 180 days ago have a token, 73.8% of those listed 3+ years ago do, so a 3-year survivor
+ * is selected against launching) and at most one tier down for gas-drag (the full plan's gas
+ * exceeds the capital it would deploy — a 1:1 dollar comparison, no invented threshold). The
+ * base tier is a priority triage on the farmer's scarce resource, capital: SKIP means "farm the
+ * rows above it first", not "uneconomic" — on this snapshot the dearest gas bill is still under
+ * 1/57,000 of the smallest implied value. No launch probability enters: the snapshot carries no
+ * token-launch dates, so no forward P(launch) can be estimated from it, and the category/age
+ * base rates do not beat a constant base rate out of sample (see NOTES-model.md).
+ */
+export function farmVerdict(
+  impPerCap: number,
+  cutoffs: FarmCutoffs,
+  age: number | null,
+  fullGas: number,
+  capital: number,
+): FarmVerdict {
+  const base: 'FARM' | 'THIN' | 'SKIP' =
+    impPerCap >= cutoffs.hi ? 'FARM' : impPerCap >= cutoffs.lo ? 'THIN' : 'SKIP';
+  const stale = age !== null && age >= FARM_STALE_DAYS;
+  const gasDrag = fullGas > capital;
+  const demote = (v: 'FARM' | 'THIN' | 'SKIP'): 'FARM' | 'THIN' | 'SKIP' => (v === 'FARM' ? 'THIN' : 'SKIP');
+  let verdict = base;
+  if (stale) verdict = demote(verdict);
+  if (gasDrag) verdict = demote(verdict);
+  return { verdict, base, stale, gasDrag, impPerCap };
+}
+
+export function farmSteps(p: SnapshotProtocol, age: number | null, implied: number, cutoffs: FarmCutoffs): FarmStep[] {
   const chain = chainOf(p);
   const gas = gasPerTx(chain);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const weekly = Math.ceil(hold / 7);
   const fullGas = Math.round((weekly + 4) * gas * 100) / 100;
-  const coverage = fullGas > 0 ? implied / fullGas : Number.POSITIVE_INFINITY;
-  const verdict: 'FARM' | 'THIN' | 'SKIP' = coverage >= 20000 ? 'FARM' : coverage >= 2000 ? 'THIN' : 'SKIP';
+  const impPerCap = capital > 0 ? implied / capital : Number.POSITIVE_INFINITY;
+  const v = farmVerdict(impPerCap, cutoffs, age, fullGas, capital);
+  const verdict = v.verdict;
   const deposit = verdict === 'THIN' ? Math.max(25, Math.round(capital / 2)) : capital;
   const planGas = verdict === 'THIN' ? Math.round(6 * gas * 100) / 100 : fullGas;
   const ratio = fullGas > 0 ? Math.round(implied / fullGas).toLocaleString('en-US') : 'infinite';
   const action = actionFor(p, deposit, chain);
+  const tierWord = v.base === 'FARM' ? 'top' : v.base === 'THIN' ? 'middle' : 'bottom';
+  const reason =
+    `${usd(Math.round(impPerCap))} of implied value per $1 of capital — ${tierWord} third of the board (thirds at ${usd(Math.round(cutoffs.lo))} and ${usd(Math.round(cutoffs.hi))})` +
+    (v.stale && age !== null
+      ? ` Listed ${age.toLocaleString('en-US')} days ago, still no token: verdict drops one tier`
+      : '') +
+    (v.gasDrag ? ` Gas ${money(fullGas)} exceeds the ${usd(capital)} deposit: verdict drops one tier` : '');
 
   const steps: FarmStep[] = [
     {
@@ -715,7 +994,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, implied: numb
       time: '5 minutes',
     });
     steps.push({
-      text: `Net: ${money(0)} spent, ${usd(0)} locked, 0 days held. Implied value ${usd(implied)} — the gas the plan would have cost, ${money(fullGas)}, is 1 in ${ratio} of it. Verdict: SKIP — the value at stake does not cover the cost of farming it.`,
+      text: `Net: ${money(0)} spent, ${usd(0)} locked, 0 days held. Implied value ${usd(implied)} — the gas the plan would have cost, ${money(fullGas)}, is 1 in ${ratio} of it. ${reason}. Verdict: SKIP — with limited capital, farm the rows above it first; the gas bill is small, so the constraint is capital and attention, not gas.`,
       cost: `${money(0)} total`,
       time: '0 minutes',
     });
@@ -757,8 +1036,8 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, implied: numb
   steps.push({
     text:
       verdict === 'THIN'
-        ? `Net: ${money(planGas)} of gas spent, ${usd(deposit)} of capital returned on exit, ${hold} days locked. Implied value ${usd(implied)} — the full plan's gas bill, ${money(fullGas)}, is 1 in ${ratio} of it, so the deposit was halved and the weekly actions cut to two. Verdict: THIN — farm it small.`
-        : `Net: ${money(planGas)} of gas spent, ${usd(deposit)} of capital returned on exit, ${hold} days locked. Implied value ${usd(implied)} — the gas bill is 1 in ${ratio} of it. Verdict: FARM.`,
+        ? `Net: ${money(planGas)} of gas spent, ${usd(deposit)} of capital returned on exit, ${hold} days locked. Implied value ${usd(implied)} — the full plan's gas bill, ${money(fullGas)}, is 1 in ${ratio} of it, so the deposit was halved and the weekly actions cut to two. ${reason}. Verdict: THIN — farm it small.`
+        : `Net: ${money(planGas)} of gas spent, ${usd(deposit)} of capital returned on exit, ${hold} days locked. Implied value ${usd(implied)} — the gas bill is 1 in ${ratio} of it. ${reason}. Verdict: FARM.`,
     cost: `${money(planGas)} total`,
     time: `${hold} days`,
   });
@@ -817,12 +1096,18 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants | null = nu
     fit: {
       intercept: calibrated.intercept,
       slope: calibrated.slope,
+      chainEthereum: calibrated.chainEthereum,
+      chainBinance: calibrated.chainBinance,
+      chainBase: calibrated.chainBase,
+      chainSolana: calibrated.chainSolana,
+      chainArbitrum: calibrated.chainArbitrum,
       n_comps: calibrated.comp_count,
       r2: fitted.r2,
       n_refits: BOOTSTRAP_REFITS,
     },
     oos: measureOos(snapshot),
     rank_range_refits: BOOTSTRAP_REFITS,
+    farm_cutoffs: farmCutoffs(board.map((r) => r.implied_value_usd / capitalFor(r))),
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,

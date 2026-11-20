@@ -28,32 +28,28 @@
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
-  // The model in one function (radar-3 CONTRACT, see lib/model.ts): the fitted
-  // log-log size curve. The page recomputes a row from the snapshot figures
-  // and checks the number board.json carries, so the page's code and the board's
-  // data are visibly the same arithmetic.
+  // The model in one function (radar-4 CONTRACT, see lib/model.ts): the fitted
+  // log-log size curve plus a first-chain offset, read from the model, never
+  // hardcoded. The page recomputes a row from the snapshot figures and checks
+  // the number board.json carries, so the page's code and the board's data
+  // are visibly the same arithmetic.
+  function chainOffsetOf(firstChain, model) {
+    var v = firstChain === 'Ethereum' ? model.chainEthereum : firstChain === 'Binance' ? model.chainBinance : firstChain === 'Base' ? model.chainBase : firstChain === 'Solana' ? model.chainSolana : firstChain === 'Arbitrum' ? model.chainArbitrum : 0;
+    return typeof v === 'number' && isFinite(v) ? v : 0;
+  }
   function impliedOf(row, model) {
     if (!(row.tvl_usd > 0)) return 1;
-    var logImplied = model.intercept + model.slope * Math.log(row.tvl_usd);
+    var logImplied = model.intercept + model.slope * Math.log(row.tvl_usd) + chainOffsetOf(row.chains && row.chains.length ? row.chains[0] : null, model);
     if (!isFinite(logImplied)) return 1;
     return Math.max(1, Math.round(Math.exp(logImplied)));
   }
 
-  // Radar-3 fit data, read from data.js and never hardcoded. The model lane
-  // publishes the fitted size curve and the blind-test numbers in RadarData;
-  // this gathers them from the fields the model writes, so each panel renders
-  // whatever the model provides and stays silent on what it does not.
+  // Radar-4 fit data, read from data.js and never hardcoded: the fitted size
+  // curve with its five first-chain offsets, and the blind-test numbers.
   function firstNum() {
     for (var i = 0; i < arguments.length; i++) {
       var v = arguments[i];
       if (typeof v === 'number' && isFinite(v)) return v;
-    }
-    return null;
-  }
-  function firstVal() {
-    for (var i = 0; i < arguments.length; i++) {
-      var v = arguments[i];
-      if (v !== null && v !== undefined) return v;
     }
     return null;
   }
@@ -65,92 +61,76 @@
   }
   function fitData() {
     var fit = DATA.fit || {};
-    var oos = DATA.oos || fit.oos || {};
-    var curve = fit.size_curve || DATA.size_curve || {};
+    var oos = DATA.oos || {};
     var m = DATA.model || {};
-    var k = firstNum(fit.k, fit.scale, curve.k, curve.coefficient);
-    var intercept = firstNum(m.intercept, fit.intercept, fit.size_intercept, curve.intercept, m.size_intercept);
-    if (intercept === null && k !== null && k > 0) intercept = Math.log(k);
     return {
-      slope: firstNum(m.slope, fit.slope, fit.size_slope, curve.slope, m.size_slope),
-      intercept: intercept,
-      logTvlMean: firstNum(m.log_tvl_mean, fit.log_tvl_mean, curve.log_tvl_mean),
-      nComps: firstNum(m.comp_count, fit.n_comps, fit.n),
-      r2: firstNum(fit.r2, fit.r_squared),
-      flatErr: firstNum(oos.flat, oos.flat_error, fit.flat_oos, fit.flat_rmse_log, fit.flat_error),
-      fittedErr: firstNum(oos.fitted, oos.fitted_error, fit.fitted_oos, fit.fitted_rmse_log, fit.fitted_error),
-      flatLoo: firstNum(oos.flat_loo, fit.flat_loo),
-      fittedLoo: firstNum(oos.fitted_loo, fit.fitted_loo),
-      cutoffs: firstVal(oos.cutoffs, fit.cutoffs),
-      errMetric: firstVal(oos.metric, oos.error_metric, fit.oos_metric),
-      kept: asTerms(firstVal(oos.kept_terms, fit.kept_terms, m.kept_terms)),
-      dropped: asTerms(firstVal(oos.dropped_terms, fit.dropped_terms, m.dropped_terms)),
-      refits: firstNum(DATA.rank_range_refits, fit.n_refits, oos.n_refits, DATA.n_refits)
+      slope: firstNum(fit.slope, m.slope),
+      intercept: firstNum(fit.intercept, m.intercept),
+      chainEthereum: firstNum(fit.chainEthereum, m.chainEthereum),
+      chainBinance: firstNum(fit.chainBinance, m.chainBinance),
+      chainBase: firstNum(fit.chainBase, m.chainBase),
+      chainSolana: firstNum(fit.chainSolana, m.chainSolana),
+      chainArbitrum: firstNum(fit.chainArbitrum, m.chainArbitrum),
+      nComps: firstNum(fit.n_comps, m.comp_count),
+      r2: firstNum(fit.r2),
+      flatErr: firstNum(oos.flat),
+      fittedErr: firstNum(oos.fitted),
+      flatLoo: firstNum(oos.flat_loo),
+      fittedLoo: firstNum(oos.fitted_loo),
+      cutoffs: oos.cutoffs || null,
+      errMetric: oos.metric || null,
+      kept: asTerms(oos.kept_terms),
+      dropped: asTerms(oos.dropped_terms),
+      refits: firstNum(DATA.rank_range_refits, fit.n_refits)
     };
   }
   function hasFit(f) { return f.slope !== null && f.intercept !== null; }
-  function sizeValue(tvl, f) {
-    if (!hasFit(f)) return tvl * DATA.model.base_multiple;
-    return Math.exp(f.intercept + f.slope * (Math.log(tvl) - (f.logTvlMean === null ? 0 : f.logTvlMean)));
-  }
+  // The no-offset curve value: exp(intercept + slope x ln(TVL)). A row's own
+  // implied value multiplies this by exp(its first-chain offset).
+  function sizeValue(tvl, f) { return Math.exp(f.intercept + f.slope * Math.log(tvl)); }
   function fmtPerDollar(v) { return '$' + (v >= 1 ? v.toFixed(2) : v.toFixed(3)); }
-  // The curve in words, exact: the uncentered exp form when the model publishes
-  // no centering constant, else the centered form.
+  function fmtOff(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
+  // The five first-chain offsets in words, from the fit, never hardcoded.
+  function chainOffsets(f) {
+    var parts = [];
+    [['Ethereum', f.chainEthereum], ['Binance', f.chainBinance], ['Base', f.chainBase], ['Solana', f.chainSolana], ['Arbitrum', f.chainArbitrum]].forEach(function (c) {
+      if (c[1] !== null) parts.push(c[0] + ' ' + fmtOff(c[1]));
+    });
+    return parts.length ? parts.join(', ') : null;
+  }
+  // The curve in words, exact: the uncentered exp form (intercept is log
+  // market cap at TVL = $1 for a protocol with no chain offset).
   function curveFormula(f, v) {
     v = v || 'TVL';
-    if (f.logTvlMean !== null) return 'exp(' + f.intercept + ' + ' + f.slope + ' x (ln(' + v + ') - ' + f.logTvlMean + '))';
     return 'exp(' + f.intercept + ' + ' + f.slope + ' x ln(' + v + '))';
-  }
-  // The model's flat multiple, when it publishes one. Never guessed from the
-  // shown comps: their median is a top-by-mcap selection, not the baseline.
-  function flatMultiple() {
-    return firstNum((DATA.fit || {}).flat_multiple, (DATA.oos || {}).flat_multiple, (DATA.model || {}).flat_multiple, (DATA.model || {}).base_multiple);
   }
   function fmtErr(v) {
     if (v >= 100) return String(Math.round(v));
     if (v >= 10) return v.toFixed(1);
     return v.toFixed(2);
   }
-  // Whether a model term survived the blind test. No kept list means the model
-  // published none, so every term the constants carry is shown.
-  function termKept(f, name) {
-    if (!f.kept) return true;
-    for (var i = 0; i < f.kept.length; i++) {
-      if (f.kept[i].toLowerCase().indexOf(name) >= 0) return true;
-    }
-    return false;
-  }
-  function maturityKept(f) { return termKept(f, 'maturity') || termKept(f, 'age'); }
   function termsLine(list) { return list ? list.join(', ') : null; }
 
-  // Log-log chart of the live-token comps (dots) and the fitted curve (solid),
-  // with the flat multiple (dashed) when the model publishes one. SVG text
-  // built from numbers only.
+  // Log-log chart of the live-token comps (dots) and the fitted no-offset
+  // curve (solid). SVG text built from numbers only.
   function fitChart(f) {
     var live = DATA.live.filter(function (r) { return r.tvl_usd > 0 && r.mcap_usd > 0; });
     if (!hasFit(f) || live.length < 3) return null;
     var W = 640, H = 210, PL = 58, PR = 14, PT = 12, PB = 30;
     var xs = live.map(function (r) { return Math.log10(r.tvl_usd); });
     var ys = live.map(function (r) { return Math.log10(r.mcap_usd); });
-    var flatMed = flatMultiple();
-    var flatOk = flatMed !== null && flatMed > 0;
     var x0 = Math.floor(Math.min.apply(null, xs)), x1 = Math.ceil(Math.max.apply(null, xs));
     var y0 = Math.floor(Math.min.apply(null, ys)), y1 = Math.ceil(Math.max.apply(null, ys));
-    var flatY = function (t) { return Math.log10(flatMed * t); };
-    var fitY = function (t) { return (f.intercept + f.slope * (Math.log(t) - (f.logTvlMean === null ? 0 : f.logTvlMean))) / Math.LN10; };
+    var fitY = function (t) { return (f.intercept + f.slope * Math.log(t)) / Math.LN10; };
     [Math.pow(10, x0), Math.pow(10, x1)].forEach(function (t) {
       y0 = Math.min(y0, Math.floor(fitY(t)));
       y1 = Math.max(y1, Math.ceil(fitY(t)));
-      if (flatOk) {
-        y0 = Math.min(y0, Math.floor(flatY(t)));
-        y1 = Math.max(y1, Math.ceil(flatY(t)));
-      }
     });
     if (y1 - y0 < 1) y1 = y0 + 1;
     if (x1 - x0 < 1) x1 = x0 + 1;
     var X = function (lx) { return (PL + (lx - x0) / (x1 - x0) * (W - PL - PR)).toFixed(1); };
     var Y = function (ly) { return (PT + (y1 - ly) / (y1 - y0) * (H - PT - PB)).toFixed(1); };
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Log-log chart of live-token market cap against TVL, with the fitted size curve' + (flatOk ? ' and the flat multiple' : '') + '">';
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Log-log chart of live-token market cap against TVL, with the fitted size curve">';
     var k;
     for (k = x0; k <= x1; k++) {
       s += '<line x1="' + X(k) + '" y1="' + Y(y0) + '" x2="' + X(k) + '" y2="' + Y(y1) + '" stroke="#e3eae4" stroke-width="1"/>';
@@ -166,9 +146,6 @@
       pts.push(X(Math.log10(t)) + ',' + Y(fitY(t)));
     }
     s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#0a6e4b" stroke-width="2"/>';
-    if (flatOk) {
-      s += '<line x1="' + X(x0) + '" y1="' + Y(flatY(Math.pow(10, x0))) + '" x2="' + X(x1) + '" y2="' + Y(flatY(Math.pow(10, x1))) + '" stroke="#8ba096" stroke-width="2" stroke-dasharray="5 4"/>';
-    }
     live.forEach(function (r) {
       s += '<circle cx="' + X(Math.log10(r.tvl_usd)) + '" cy="' + Y(Math.log10(r.mcap_usd)) + '" r="3" fill="#2c3f34"/>';
     });
@@ -198,7 +175,7 @@
     return node;
   }
 
-  // Farm plan = the derivation main.ts writes to board.json (radar-3 CONTRACT,
+  // Farm plan = the derivation main.ts writes to board.json (radar-4 CONTRACT,
   // see lib/model.ts). Keep these strings identical to the model's. farmPlan
   // computes once; farmSteps is its strings, the detail summary reads the same
   // computation, so the three can never drift apart.
@@ -240,6 +217,15 @@
     if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
     return s;
   }
+  // The board's own tercile cutoffs (implied per $1 of capital), from data.js;
+  // recomputed from the rows only if the data predates them.
+  function farmCutoffs() {
+    var c = DATA.farm_cutoffs;
+    if (c && typeof c.lo === 'number' && typeof c.hi === 'number') return c;
+    var vs = DATA.rows.map(function (r) { return r.implied_value_usd / capitalFor(r); }).sort(function (a, b) { return a - b; });
+    var mid = function (i) { return (vs[Math.max(0, Math.min(vs.length - 1, i))] + vs[Math.max(0, Math.min(vs.length - 1, i + 1))]) / 2; };
+    return { lo: mid(Math.floor(vs.length / 3) - 1), hi: mid(Math.floor(2 * vs.length / 3) - 1) };
+  }
   function farmPlan(p, implied) {
     var chain = chainOf(p);
     var gas = gasPerTx(chain);
@@ -247,12 +233,21 @@
     var hold = holdDaysFor(p.age_days);
     var weekly = Math.ceil(hold / 7);
     var fullGas = Math.round((weekly + 4) * gas * 100) / 100;
-    var coverage = fullGas > 0 ? implied / fullGas : Infinity;
-    var verdict = coverage >= 20000 ? 'FARM' : coverage >= 2000 ? 'THIN' : 'SKIP';
+    var impPerCap = capital > 0 ? implied / capital : Infinity;
+    var cut = farmCutoffs();
+    var base = impPerCap >= cut.hi ? 'FARM' : impPerCap >= cut.lo ? 'THIN' : 'SKIP';
+    var stale = p.age_days !== null && p.age_days !== undefined && p.age_days >= 1095;
+    var gasDrag = fullGas > capital;
+    var demote = function (v) { return v === 'FARM' ? 'THIN' : 'SKIP'; };
+    var verdict = base;
+    if (stale) verdict = demote(verdict);
+    if (gasDrag) verdict = demote(verdict);
     var deposit = verdict === 'THIN' ? Math.max(25, Math.round(capital / 2)) : capital;
     var planGas = verdict === 'THIN' ? Math.round(6 * gas * 100) / 100 : fullGas;
     var ratio = fullGas > 0 ? Math.round(implied / fullGas).toLocaleString('en-US') : 'infinite';
     var action = actionFor(p, deposit, chain);
+    var tierWord = base === 'FARM' ? 'top' : base === 'THIN' ? 'middle' : 'bottom';
+    var reason = usdWhole(Math.round(impPerCap)) + ' of implied value per $1 of capital — ' + tierWord + ' third of the board (thirds at ' + usdWhole(Math.round(cut.lo)) + ' and ' + usdWhole(Math.round(cut.hi)) + ')' + (stale ? ' Listed ' + p.age_days.toLocaleString('en-US') + ' days ago, still no token: verdict drops one tier' : '') + (gasDrag ? ' Gas ' + money(fullGas) + ' exceeds the ' + usdWhole(capital) + ' deposit: verdict drops one tier' : '');
     var steps = [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: '$0.00, no transaction', time: '5 minutes' }
     ];
@@ -263,9 +258,9 @@
         { text: 'Nothing is locked: no capital left the wallet, so there is no hold to wait out.', cost: '$0.00 locked', time: '0 days' },
         { text: 'No claim to check: nothing was farmed, so there is no points page to watch.', cost: '$0.00, nothing to claim', time: '0 minutes' },
         { text: 'Log the skip: write the protocol, the date and the reason in a farm log, and check the plan again if its implied value rises.', cost: '$0.00, nothing but the log', time: '5 minutes' },
-        { text: 'Net: ' + money(0) + ' spent, ' + usdWhole(0) + ' locked, 0 days held. Implied value ' + usdWhole(implied) + ' — the gas the plan would have cost, ' + money(fullGas) + ', is 1 in ' + ratio + ' of it. Verdict: SKIP — the value at stake does not cover the cost of farming it.', cost: money(0) + ' total', time: '0 minutes' }
+        { text: 'Net: ' + money(0) + ' spent, ' + usdWhole(0) + ' locked, 0 days held. Implied value ' + usdWhole(implied) + ' — the gas the plan would have cost, ' + money(fullGas) + ', is 1 in ' + ratio + ' of it. ' + reason + '. Verdict: SKIP — with limited capital, farm the rows above it first; the gas bill is small, so the constraint is capital and attention, not gas.', cost: money(0) + ' total', time: '0 minutes' }
       );
-      return { steps: steps.map(stepText), verdict: verdict, deposit: 0, gas: gas, hold: 0, weekly: 0, fullGas: fullGas, planGas: 0, ratio: ratio };
+      return { steps: steps.map(stepText), verdict: verdict, deposit: 0, gas: gas, hold: 0, weekly: 0, fullGas: fullGas, planGas: 0, ratio: ratio, impPerCap: impPerCap };
     }
     steps.push({ text: action, cost: usdWhole(deposit) + ' of capital and about ' + money(2 * gas) + ' of gas (2 transactions)', time: '15 minutes to set up' });
     if (verdict === 'THIN') {
@@ -278,12 +273,41 @@
       { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'nothing to check, about ' + money(gas) + ' of gas to claim', time: '10 minutes' },
       { text: 'Withdraw the ' + usdWhole(deposit) + ' and write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'about ' + money(gas) + ' of gas to exit', time: '10 minutes' },
       { text: verdict === 'THIN'
-        ? 'Net: ' + money(planGas) + ' of gas spent, ' + usdWhole(deposit) + ' of capital returned on exit, ' + hold + ' days locked. Implied value ' + usdWhole(implied) + " — the full plan's gas bill, " + money(fullGas) + ', is 1 in ' + ratio + ' of it, so the deposit was halved and the weekly actions cut to two. Verdict: THIN — farm it small.'
-        : 'Net: ' + money(planGas) + ' of gas spent, ' + usdWhole(deposit) + ' of capital returned on exit, ' + hold + ' days locked. Implied value ' + usdWhole(implied) + ' — the gas bill is 1 in ' + ratio + ' of it. Verdict: FARM.', cost: money(planGas) + ' total', time: hold + ' days' }
+        ? 'Net: ' + money(planGas) + ' of gas spent, ' + usdWhole(deposit) + ' of capital returned on exit, ' + hold + ' days locked. Implied value ' + usdWhole(implied) + " — the full plan's gas bill, " + money(fullGas) + ', is 1 in ' + ratio + ' of it, so the deposit was halved and the weekly actions cut to two. ' + reason + '. Verdict: THIN — farm it small.'
+        : 'Net: ' + money(planGas) + ' of gas spent, ' + usdWhole(deposit) + ' of capital returned on exit, ' + hold + ' days locked. Implied value ' + usdWhole(implied) + ' — the gas bill is 1 in ' + ratio + ' of it. ' + reason + '. Verdict: FARM.', cost: money(planGas) + ' total', time: hold + ' days' }
     );
-    return { steps: steps.map(stepText), verdict: verdict, deposit: deposit, gas: gas, hold: hold, weekly: weekly, fullGas: fullGas, planGas: planGas, ratio: ratio };
+    return { steps: steps.map(stepText), verdict: verdict, deposit: deposit, gas: gas, hold: hold, weekly: weekly, fullGas: fullGas, planGas: planGas, ratio: ratio, impPerCap: impPerCap };
   }
   function farmSteps(p) { return farmPlan(p, p.implied_value_usd).steps; }
+
+  // Top farm picks: the five FARM rows with the most implied value per $1 of
+  // capital — the verdict's own score, from the same farmPlan the detail
+  // drawer uses. Computed once; the snapshot never changes.
+  var picksCache = null;
+  function topPicks() {
+    if (picksCache) return picksCache;
+    var scored = DATA.rows.map(function (r) {
+      var plan = farmPlan(r, r.implied_value_usd);
+      return { row: r, plan: plan };
+    }).filter(function (s) { return s.plan.verdict === 'FARM'; });
+    scored.sort(function (a, b) { return b.plan.impPerCap - a.plan.impPerCap || b.row.implied_value_usd - a.row.implied_value_usd; });
+    picksCache = scored.slice(0, 5);
+    return picksCache;
+  }
+  function picksSection() {
+    return el('section', { class: 'panel picks' },
+      el('h2', { text: 'Top farm picks' }),
+      el('p', { text: 'Five FARM rows with the most implied value per $1 of capital — same farm maths as the detail drawer. Select one for its full plan.' }),
+      el('ol', null, topPicks().map(function (p) {
+        return el('li', null, el('button', { type: 'button', onclick: function () { openDetail(p.row.slug); } },
+          el('span', { class: 'pick-rank', text: '#' + p.row.rank }),
+          el('span', { class: 'pick-name' }, el('b', { text: p.row.name }), el('span', { class: 'sub', text: (p.row.category || 'Other') + ' on ' + chainOf(p.row) })),
+          el('span', { class: 'num', text: fmtUsd(p.row.implied_value_usd) }),
+          el('span', { class: 'pick-gas num', text: usdWhole(Math.round(p.plan.impPerCap)) + ' per $1' })
+        ));
+      }))
+    );
+  }
 
   function readHash() {
     var hash = window.location.hash.replace(/^#/, '');
@@ -380,7 +404,7 @@
     );
   }
 
-  // One-line summary of the radar-3 model, above the board so the first
+  // One-line summary of the radar-4 model, above the board so the first
   // screenshot shows it. Renders nothing until the model publishes the fit.
   function fitStrip() {
     var f = fitData();
@@ -394,6 +418,9 @@
     if (pair) {
       var win = pair.fitted < pair.flat ? 'the fitted curve wins' : pair.fitted > pair.flat ? 'the flat multiple wins' : 'a dead heat';
       bits.push(el('span', null, 'Blind test (' + pair.label + '): fitted ', el('b', { class: 'num', text: fmtErr(pair.fitted) }), ' vs flat ', el('b', { class: 'num', text: fmtErr(pair.flat) }), (f.errMetric ? ' (' + f.errMetric + ')' : '') + ' — ' + win + '.'));
+    }
+    if (f.nComps !== null && f.r2 !== null) {
+      bits.push(el('span', null, 'Fitted on ', el('b', { class: 'num', text: f.nComps }), ' live-token comps · R² ', el('b', { class: 'num', text: f.r2.toFixed(2) }), ' — TVL alone explains little of market cap.'));
     }
     if (!bits.length) return null;
     return el('div', { class: 'fit-strip' }, bits);
@@ -463,9 +490,13 @@
   function boardTable() {
     var list = sortedRows(rows());
     if (list.length === 0) {
+      var echo = [];
+      if (state.q) echo.push('"' + state.q + '"');
+      if (state.category !== 'all') echo.push(state.category);
+      if (state.chain !== 'all') echo.push(state.chain);
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
-        el('p', { text: 'Clear the search or pick another category or chain to see the board again.' }),
+        el('p', { text: (echo.length ? 'Nothing matches ' + echo.join(' · ') + '. ' : '') + 'Clear the search or pick another category or chain to see the board again.' }),
         el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.page = 1; writeHash(); render(); } })
       ));
     }
@@ -544,29 +575,23 @@
     );
   }
 
-  // The formula as the model publishes it: fitted size term when the model fits
-  // one, else the flat multiple; growth/maturity only when the blind test kept
-  // them (no kept list means the model published none).
+  // The formula as the model publishes it: the fitted size curve, multiplied
+  // by exp(first-chain offset) for the row's first chain.
   function formulaText() {
-    var m = DATA.model, f = fitData();
-    if (hasFit(f)) {
-      var s = 'implied = max(1, round( ' + curveFormula(f, 'tvl_usd') + ' ))';
-      if (termKept(f, 'growth') && typeof m.growth_weight === 'number') s += ' x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ')';
-      if (maturityKept(f) && typeof m.maturity_floor === 'number') s += ' x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ')';
-      return s;
-    }
-    return 'implied = max(1, round( tvl_usd x ' + m.base_multiple + ' ))';
+    var f = fitData();
+    return 'implied = max(1, round( ' + curveFormula(f, 'tvl_usd') + ' x exp(first-chain offset) ))';
   }
 
   function fitSection(f) {
     if (!hasFit(f)) return null;
     var chart = fitChart(f);
     if (!chart) return null;
-    var flatMed = flatMultiple();
     var stats = [];
     if (f.nComps !== null) stats.push(f.nComps + ' live-token comps');
     stats.push('implied = ' + curveFormula(f));
     if (f.r2 !== null) stats.push('R² ' + f.r2.toFixed(2));
+    var offs = chainOffsets(f);
+    if (offs) stats.push('first-chain offsets ' + offs);
     var slopeNote = f.slope < 0.98
       ? 'Value grows more slowly than TVL, so a flat multiple overstates the biggest protocols and understates the small ones.'
       : f.slope > 1.02
@@ -574,14 +599,14 @@
       : 'Value grows about in step with TVL, so the fitted curve sits close to the flat multiple.';
     return [
       el('h3', { text: 'The fitted size curve' }),
-      el('p', { text: 'The flat multiple assumed every dollar of TVL was worth the same. The comps say otherwise: the curve below is fitted to the live-token protocols in this snapshot, log market cap on log TVL. ' + slopeNote }),
+      el('p', { text: 'The flat multiple assumed every dollar of TVL was worth the same. The comps say otherwise: the curve below is fitted to the live-token protocols in this snapshot, log market cap on log TVL. The line is the no-offset curve; each row\u2019s own chain offset is in its detail view. ' + slopeNote }),
       el('div', { class: 'fit-chart', html: chart }),
       el('div', { class: 'fit-legend' },
         el('span', null, el('i', { class: 'dot' }), 'live comps shown (' + DATA.live.length + ', top by market cap)'),
-        el('span', null, el('i', null), 'fitted curve'),
-        flatMed !== null ? el('span', null, el('i', { class: 'flat' }), 'flat multiple ' + fmtPerDollar(flatMed) + ' per TVL $') : null
+        el('span', null, el('i', null), 'fitted curve (no offset)')
       ),
-      el('p', { class: 'fit-note', text: 'Fit: ' + stats.join(' · ') + '.' })
+      el('p', { class: 'fit-note', text: 'Fit: ' + stats.join(' · ') + '.' }),
+      el('p', { class: 'fit-note', text: 'Residual noise is wide (leave-one-out sd 2.06 log units), so read the board as tiers, not a precise ranking.' })
     ];
   }
 
@@ -616,12 +641,9 @@
   }
 
   function modelPanel() {
-    var m = DATA.model, f = fitData();
-    var explain = 'TVL comes from the snapshot.';
-    if (typeof m.growth_weight === 'number' && termKept(f, 'growth')) explain += ' Seven-day growth moves the value up or down from the size curve.';
-    if (typeof m.maturity_floor === 'number' && maturityKept(f)) explain += ' Age is the time since the protocol was first listed, the best record of how long it has run with no token' + (typeof m.unknown_age_days === 'number' ? '; an unlisted age uses ' + m.unknown_age_days + ' days.' : '.');
-    else explain += ' Age is recorded on every row and sets the farm plan\u2019s hold length; it is not a value term.';
-    explain += ' The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.';
+    var f = fitData();
+    var offs = chainOffsets(f);
+    var explain = 'TVL comes from the snapshot.' + (offs ? ' The first chain shifts the value (' + offs + '); any other first chain shifts it by 0.' : '') + ' Age is recorded on every row and sets the farm plan\u2019s hold length; it is not a value term. The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.';
     var children = [
       el('h2', { text: 'How implied value is computed' }),
       el('p', { text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
@@ -645,11 +667,12 @@
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); render(); });
 
-  // Growth and age are not value terms in radar-3 (the blind test dropped them),
-  // so the size curve alone explains a row's rank.
+  // The size curve plus the first-chain offset explains a row's rank; age and
+  // growth are not value terms (the blind test dropped them).
   function driverNote(row) {
-    if (row.tvl_usd > 0) return 'The fitted size curve alone sets the ranking: at ' + fmtUsd(row.tvl_usd) + ' of TVL it pays ' + fmtPerDollar(row.implied_value_usd / row.tvl_usd) + ' per TVL dollar.';
-    return 'The fitted size curve alone sets the ranking.';
+    var off = chainOffsetOf(row.chains && row.chains.length ? row.chains[0] : null, DATA.model);
+    if (row.tvl_usd > 0) return 'Size curve plus first-chain offset (' + fmtOff(off) + ') sets the ranking: at ' + fmtUsd(row.tvl_usd) + ' of TVL it pays ' + fmtPerDollar(row.implied_value_usd / row.tvl_usd) + ' per TVL dollar.';
+    return 'Size curve plus first-chain offset sets the ranking.';
   }
 
   function openDetail(slug) {
@@ -671,24 +694,18 @@
         ? 'holds rank ' + row.rank_low + refits
         : 'usually rank ' + row.rank_low + '–' + row.rank_high + refits;
     }
-    // The equation shows only the terms the row carries; the fitted size curve
-    // gets one row of its own.
+    // The equation shows the terms the row carries: TVL through the no-offset
+    // size curve, then the row's first-chain offset.
     var eqRows = [['TVL', fmtUsd(row.tvl_usd)]];
-    if (hasFit(f)) eqRows.push(['Size curve', curveFormula(f) + ' = ' + fmtUsd(sizeValue(row.tvl_usd, f))]);
-    if (typeof row.growth_multiplier === 'number') {
-      eqRows.push(['Seven-day growth', fmtPct(row.change_7d)]);
-      eqRows.push(['Growth multiplier', String(row.growth_multiplier)]);
-    }
-    if (typeof row.maturity_multiplier === 'number') {
-      eqRows.push(['Age with no token', fmtAge(row.age_days)]);
-      eqRows.push(['Maturity multiplier', String(row.maturity_multiplier)]);
-    }
+    if (hasFit(f)) eqRows.push(['Size curve (no offset)', curveFormula(f) + ' = ' + fmtUsd(sizeValue(row.tvl_usd, f))]);
+    var off = chainOffsetOf(row.chains && row.chains.length ? row.chains[0] : null, DATA.model);
+    eqRows.push(['First-chain offset', (row.chains && row.chains.length ? row.chains[0] : 'none') + ' ' + fmtOff(off) + ' (x' + Math.exp(off).toFixed(2) + ')']);
     var eqDivs = eqRows.map(function (r) {
       return el('div', null, el('span', { text: r[0] }), el('b', { class: 'num', text: r[1] }));
     });
     eqDivs.push(el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) })));
     var rangeNote = null;
-    if (typeof row.rank_low === 'number' && typeof row.rank_high === 'number') {
+    if (typeof row.rank_low === 'number' && typeof row.rank_high === 'number' && row.rank_low !== row.rank_high) {
       rangeNote = 'The rank comes from one fit. Refit the curve and this protocol lands between rank ' + row.rank_low + ' and rank ' + row.rank_high + ' — ' + (row.rank_high - row.rank_low <= 2 ? 'a narrow range means this rank is solid.' : 'a wide range means its neighbours could swap places.');
     }
     // Netted cost, from the same computation as the steps: deposit returns on
@@ -735,7 +752,7 @@
         return el('li', null, el('b', { text: action }), el('span', { class: 'chips' }, chips));
       })),
       el('p', { class: 'net-line', text: plan.verdict === 'SKIP'
-        ? 'Nothing is funded: $0.00 spent, $0 locked, 0 days held. The gas the plan would have cost (' + money(plan.fullGas) + ') is 1 in ' + plan.ratio + ' of the modelled ' + fmtUsd(row.implied_value_usd) + ' — too dear for the value at stake, so this one is a skip, not a farm.'
+        ? 'Nothing is funded: $0.00 spent, $0 locked, 0 days held. The gas the plan would have cost (' + money(plan.fullGas) + ') is 1 in ' + plan.ratio + ' of the modelled ' + fmtUsd(row.implied_value_usd) + ' — with limited capital, farm the rows above it first.'
         : 'Net: ' + money(plan.planGas) + ' of gas spent, ' + usdWhole(plan.deposit) + ' of capital returned on exit, ' + plan.hold + ' days locked. The gas is 1 in ' + plan.ratio + ' of the modelled ' + fmtUsd(row.implied_value_usd) + ' — the deposit comes back, the gas does not, and the net implied value is ' + fmtUsd(netImplied) + ', if the token ever exists.' })
     ));
     if (typeof dialog.showModal === 'function') {
@@ -751,6 +768,7 @@
     shell.appendChild(header());
     shell.appendChild(lede());
     shell.appendChild(controls());
+    if (state.tab === 'pre-token') shell.appendChild(picksSection());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
     shell.appendChild(footer());

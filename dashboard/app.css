@@ -206,6 +206,17 @@ tr.top2 .rank-badge, tr.top3 .rank-badge { background: var(--accent); border-col
 }
 .driver { margin-top: var(--s3); padding: var(--s3) var(--s4); background: var(--accent-soft); border-radius: var(--radius-control); font-size: 13.5px; color: var(--ink-soft); }
 
+/* Radar-4: top farm picks. */
+.picks { margin-top: var(--s4); padding: var(--s4) var(--s5); display: grid; gap: var(--s2); }
+.picks > p { color: var(--muted); font-size: 13.5px; }
+.picks ol { margin: 0; padding: 0; list-style: none; }
+.picks li + li { border-top: 1px solid var(--border); }
+.picks button { display: flex; align-items: baseline; gap: var(--s3); width: 100%; padding: var(--s3) 0; border: 0; background: none; text-align: left; font-size: 14px; }
+.pick-rank { font-family: var(--font-num); color: var(--muted); min-width: 34px; }
+.pick-name { display: grid; gap: 2px; flex: 1; }
+.pick-name .sub { color: var(--muted); font-size: 12px; }
+.pick-gas { color: var(--muted); }
+
 /* Radar-3: fitted-curve strip, fit chart, out-of-sample table, rank ranges. */
 .fit-strip {
   margin-top: var(--s4); padding: var(--s3) var(--s4); background: var(--surface);
