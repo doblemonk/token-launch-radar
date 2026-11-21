@@ -1,8 +1,8 @@
-// Token Launch Radar, model radar-4 (Node 22, standard library only).
+// Token Launch Radar, model radar-5 (Node 22, standard library only).
 //
 // implied value = exp(intercept + slope x ln(TVL)), a log-log size curve fitted
-// at run time by lib/model.ts to the snapshot's live-token protocols (intercept 7.7881, slope
-// 0.4721 on the sealed snapshot, n = 119). The program reads the snapshot from /input/snapshot.json
+// at run time by lib/model.ts to the snapshot's live-token protocols (intercept 8.2396, slope
+// 0.4314 on the sealed snapshot, n = 119). The program reads the snapshot from /input/snapshot.json
 // (or --input <file|dir>), scores every pre-token protocol, writes the ranked board (198 rows:
 // 40 watchlist + 158 early) to /output/board.json, and copies this repository's dashboard/ and
 // screenshots/ to /output. Last it writes /output/dossier.json, the summary the judge reads, with
@@ -139,7 +139,7 @@ function formatUsd(value: number): string {
 
 /** Run summary on stdout: counts, outputs, top rows, and the model calibration. */
 function summarize(): void {
-  process.stdout.write(`token radar: model radar-4, log-log fit + first-chain dummies intercept ${radar.model.intercept} slope ${radar.model.slope} on ${radar.model.comp_count} live-token comps\n`);
+  process.stdout.write(`token radar: model radar-5, log-log fit + first-chain dummies intercept ${radar.model.intercept} slope ${radar.model.slope} on ${radar.model.comp_count} live-token comps\n`);
   process.stdout.write(`token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n`);
   process.stdout.write(`token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`);
   const topTen = board.slice(0, 10).reduce((sum, row) => sum + row.implied_value_usd, 0);

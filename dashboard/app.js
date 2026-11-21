@@ -28,7 +28,7 @@
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
   }
-  // The model in one function (radar-4 CONTRACT, see lib/model.ts): the fitted
+  // The model in one function (radar-5 CONTRACT, see lib/model.ts): the fitted
   // log-log size curve plus a first-chain offset, read from the model, never
   // hardcoded. The page recomputes a row from the snapshot figures and checks
   // the number board.json carries, so the page's code and the board's data
@@ -44,7 +44,7 @@
     return Math.max(1, Math.round(Math.exp(logImplied)));
   }
 
-  // Radar-4 fit data, read from data.js and never hardcoded: the fitted size
+  // Radar-5 fit data, read from data.js and never hardcoded: the fitted size
   // curve with its five first-chain offsets, and the blind-test numbers.
   function firstNum() {
     for (var i = 0; i < arguments.length; i++) {
@@ -175,7 +175,7 @@
     return node;
   }
 
-  // Farm plan = the derivation main.ts writes to board.json (radar-4 CONTRACT,
+  // Farm plan = the derivation main.ts writes to board.json (radar-5 CONTRACT,
   // see lib/model.ts). Keep these strings identical to the model's. farmPlan
   // computes once; farmSteps is its strings, the detail summary reads the same
   // computation, so the three can never drift apart.
@@ -247,18 +247,25 @@
     var ratio = fullGas > 0 ? Math.round(implied / fullGas).toLocaleString('en-US') : 'infinite';
     var action = actionFor(p, deposit, chain);
     var tierWord = base === 'FARM' ? 'top' : base === 'THIN' ? 'middle' : 'bottom';
-    var reason = usdWhole(Math.round(impPerCap)) + ' of implied value per $1 of capital — ' + tierWord + ' third of the board (thirds at ' + usdWhole(Math.round(cut.lo)) + ' and ' + usdWhole(Math.round(cut.hi)) + ')' + (stale ? ' Listed ' + p.age_days.toLocaleString('en-US') + ' days ago, still no token: verdict drops one tier' : '') + (gasDrag ? ' Gas ' + money(fullGas) + ' exceeds the ' + usdWhole(capital) + ' deposit: verdict drops one tier' : '');
+    var reason = usdWhole(Math.round(impPerCap)) + ' implied per $1 — ' + tierWord + ' third (thirds at ' + usdWhole(Math.round(cut.lo)) + ' and ' + usdWhole(Math.round(cut.hi)) + ')' + (stale ? ' Listed ' + p.age_days.toLocaleString('en-US') + 'd ago, still no token: drops one tier' : '') + (gasDrag ? ' Gas ' + money(fullGas) + ' exceeds the ' + usdWhole(capital) + ' deposit: drops one tier' : '');
     var steps = [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: '$0.00, no transaction', time: '5 minutes' }
     ];
     if (verdict === 'SKIP') {
+      var dm = (stale ? 1 : 0) + (gasDrag ? 1 : 0);
+      var tt = dm === 0 ? Math.round(cut.lo * capital) : Math.round(cut.hi * capital);
+      var dn = stale && gasDrag ? 'staleness and gas-drag' : stale ? 'staleness' : 'gas-drag';
+      var td = Math.max(25, Math.round(capital / 2));
+      var ta = actionFor(p, td, chain);
+      var tr = dm === 0 ? 'Trigger: THIN at ' + usdWhole(tt) + ' implied (' + usdWhole(Math.round(cut.lo)) + ' per $1); FARM at ' + usdWhole(Math.round(cut.hi * capital)) + ' (' + usdWhole(Math.round(cut.hi)) + ' per $1).' : dm === 1 ? 'Trigger: THIN at ' + usdWhole(tt) + ' implied (' + usdWhole(Math.round(cut.hi)) + ' per $1). The ' + dn + ' demotion caps this row at THIN.' : 'No trigger: the ' + dn + ' demotions cap this row at SKIP. Watch for a token launch instead.';
+      var nc = dm < 2 ? 'watch the trigger above and farm it the week it fires' : 'watch for a token launch instead';
       steps.push(
-        { text: 'Do not deposit: the verdict below is SKIP, so no position is funded and no capital leaves the wallet.', cost: '$0.00, no deposit', time: '0 minutes' },
-        { text: 'No weekly actions: the position was never funded, so there is nothing to qualify.', cost: '$0.00, no gas', time: '0 minutes' },
-        { text: 'Nothing is locked: no capital left the wallet, so there is no hold to wait out.', cost: '$0.00 locked', time: '0 days' },
-        { text: 'No claim to check: nothing was farmed, so there is no points page to watch.', cost: '$0.00, nothing to claim', time: '0 minutes' },
-        { text: 'Log the skip: write the protocol, the date and the reason in a farm log, and check the plan again if its implied value rises.', cost: '$0.00, nothing but the log', time: '5 minutes' },
-        { text: 'Net: ' + money(0) + ' spent, ' + usdWhole(0) + ' locked, 0 days held. Implied value ' + usdWhole(implied) + ' — the gas the plan would have cost, ' + money(fullGas) + ', is 1 in ' + ratio + ' of it. ' + reason + '. Verdict: SKIP — with limited capital, farm the rows above it first; the gas bill is small, so the constraint is capital and attention, not gas.', cost: money(0) + ' total', time: '0 minutes' }
+        { text: 'Watch, do not deposit: no capital goes in now. Check the TVL and any token-launch signal each week — the next step is the level that changes it.', cost: '$0.00, no deposit', time: '5 minutes a week' },
+        { text: tr, cost: '$0.00, nothing to spend', time: '0 minutes' },
+        { text: 'If the row promotes to THIN, farm it small: ' + ta + ' Then make two qualifying actions in the first 30 days, then stop.', cost: usdWhole(td) + ' of capital and about ' + money(2 * gas) + ' of gas (2 transactions)', time: '15 minutes to set up' },
+        { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the ' + usdWhole(td) + ' stays in the position', time: hold + ' days' },
+        { text: 'Before you withdraw, open the protocol\'s own points or rewards page and claim only from the link it publishes.', cost: 'nothing to check, about ' + money(gas) + ' of gas to claim', time: '10 minutes' },
+        { text: 'Net: ' + money(0) + ' spent now, ' + usdWhole(0) + ' locked, 0 days held. Implied value ' + usdWhole(implied) + ' — the gas the plan would have cost, ' + money(fullGas) + ', is 1 in ' + ratio + ' of it. ' + reason + '. Verdict: SKIP — with limited capital, farm the rows above it first; ' + nc + '.', cost: money(0) + ' total', time: '0 minutes' }
       );
       return { steps: steps.map(stepText), verdict: verdict, deposit: 0, gas: gas, hold: 0, weekly: 0, fullGas: fullGas, planGas: 0, ratio: ratio, impPerCap: impPerCap };
     }
@@ -404,7 +411,7 @@
     );
   }
 
-  // One-line summary of the radar-4 model, above the board so the first
+  // One-line summary of the radar-5 model, above the board so the first
   // screenshot shows it. Renders nothing until the model publishes the fit.
   function fitStrip() {
     var f = fitData();
@@ -599,14 +606,14 @@
       : 'Value grows about in step with TVL, so the fitted curve sits close to the flat multiple.';
     return [
       el('h3', { text: 'The fitted size curve' }),
-      el('p', { text: 'The flat multiple assumed every dollar of TVL was worth the same. The comps say otherwise: the curve below is fitted to the live-token protocols in this snapshot, log market cap on log TVL. The line is the no-offset curve; each row\u2019s own chain offset is in its detail view. ' + slopeNote }),
+      el('p', { text: 'The flat multiple assumed every TVL dollar was worth the same. The comps say otherwise: the curve below is fitted to the live-token protocols in this snapshot, log market cap on log TVL. The line is the no-offset curve; each row\u2019s chain offset is in its detail view. ' + slopeNote }),
       el('div', { class: 'fit-chart', html: chart }),
       el('div', { class: 'fit-legend' },
         el('span', null, el('i', { class: 'dot' }), 'live comps shown (' + DATA.live.length + ', top by market cap)'),
         el('span', null, el('i', null), 'fitted curve (no offset)')
       ),
       el('p', { class: 'fit-note', text: 'Fit: ' + stats.join(' · ') + '.' }),
-      el('p', { class: 'fit-note', text: 'Residual noise is wide (leave-one-out sd 2.06 log units), so read the board as tiers, not a precise ranking.' })
+      el('p', { class: 'fit-note', text: 'Residual noise is wide (leave-one-out sd 2.06 log units): read the board as tiers, not a precise ranking.' })
     ];
   }
 
@@ -618,7 +625,7 @@
     var out = [el('h3', { text: 'Out-of-sample test' })];
     if (loo || wf) {
       var metric = f.errMetric ? ' (' + f.errMetric + ', lower is better)' : ' (lower is better)';
-      out.push(el('p', { text: 'Out-of-sample means comps the fit never saw, so a curve that merely memorised its comps scores badly here. Flat multiple against fitted curve' + metric + ':' }));
+      out.push(el('p', { text: 'Out-of-sample means comps the fit never saw, so a curve that merely memorised its comps scores badly. Flat multiple against fitted curve' + metric + ':' }));
       var tests = [];
       if (loo) tests.push({ name: 'Leave-one-out', flat: f.flatLoo, fitted: f.fittedLoo });
       if (wf) tests.push({ name: 'Walk-forward', flat: f.flatErr, fitted: f.fittedErr });
@@ -636,14 +643,14 @@
     var terms = [];
     if (keptLine) terms.push('Kept: ' + keptLine);
     if (droppedLine) terms.push('Dropped: ' + droppedLine);
-    if (terms.length) out.push(el('p', { class: 'fit-note', text: 'Blind test on the model terms — ' + terms.join(' · ') + '. A dropped term is left out of the formula above.' }));
+    if (terms.length) out.push(el('p', { class: 'fit-note', text: 'Blind test on the model terms — ' + terms.join(' · ') + '. A dropped term is left out above.' }));
     return out;
   }
 
   function modelPanel() {
     var f = fitData();
     var offs = chainOffsets(f);
-    var explain = 'TVL comes from the snapshot.' + (offs ? ' The first chain shifts the value (' + offs + '); any other first chain shifts it by 0.' : '') + ' Age is recorded on every row and sets the farm plan\u2019s hold length; it is not a value term. The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.';
+    var explain = 'TVL comes from the snapshot.' + (offs ? ' The first chain shifts the value (' + offs + '); any other first chain shifts it by 0.' : '') + ' Age is recorded on every row and sets the farm plan\u2019s hold length, not its value. The early radar is every pre-token protocol below the watchlist floor, by TVL; live-token protocols are set aside with their market caps shown.';
     var children = [
       el('h2', { text: 'How implied value is computed' }),
       el('p', { text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
@@ -660,7 +667,7 @@
   function footer() {
     return el('footer', { class: 'foot' },
       el('p', { text: 'Snapshot ' + DATA.as_of + ' · DefiLlama protocol index · Model ' + DATA.model_version + ' · Board of ' + DATA.board_size + ' pre-token protocols.' }),
-      el('p', { class: 'fine', text: 'Implied value is this entry\u2019s model, not a promise and not a price. \u201CRecords no token\u201D means the snapshot\u2019s record lists no token; it is not proof the protocol has none.' })
+      el('p', { class: 'fine', text: 'Implied value is this entry\u2019s model, not a promise and not a price. \u201CRecords no token\u201D means the snapshot lists no token; it is not proof the protocol has none.' })
     );
   }
 
@@ -730,7 +737,7 @@
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Implied value' }),
       el('div', { class: 'equation' }, eqDivs),
-      el('p', { class: 'check ' + (match ? 'ok' : 'bad'), text: 'Model ' + DATA.model_version + ': the page recomputes this row as ' + fmtUsd(recomputed) + (match ? ' — the same number the board carries.' : ' — which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' }),
+      el('p', { class: 'check ' + (match ? 'ok' : 'bad'), text: 'Model ' + DATA.model_version + ': the page recomputes this row as ' + fmtUsd(recomputed) + (match ? ' — the same number the board carries.' : ' — which differs: the data would be stale.') + ' An estimate, not a price.' }),
       el('p', { class: 'driver', text: driverNote(row) }),
       rangeNote ? el('p', { class: 'driver range-note', text: rangeNote }) : null
     ));

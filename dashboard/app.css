@@ -1,6 +1,4 @@
-/* Token Radar — pine-and-paper theme.
-   Palette: one deep pine, one signal green, one amber for watchlist marks, one red
-   for down moves. Two radii, two type families, one spacing scale. */
+/* Token Radar — pine-and-paper theme. */
 :root {
   --canvas: #edf1ec;
   --surface: #ffffff;
@@ -48,7 +46,7 @@ a { color: var(--accent); }
 
 .shell { max-width: 1360px; margin: 0 auto; padding: 0 var(--s6) var(--s7); }
 
-/* Masthead: pine band with the wordmark and the snapshot stamp. */
+/* Masthead. */
 .top {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s5);
   margin: 0 calc(-1 * var(--s6)); padding: var(--s4) var(--s6);
@@ -62,7 +60,7 @@ a { color: var(--accent); }
 .top-meta span { white-space: nowrap; }
 .top-meta b { color: #fff; font-weight: 600; }
 
-/* Hero: the question, the answer in one line, and four facts. */
+/* Hero. */
 .lede { padding: var(--s6) 0 var(--s5); border-bottom: 1px solid var(--border); }
 .lede h1 { max-width: 22ch; }
 .lede .standfirst { color: var(--muted); max-width: 74ch; margin-top: var(--s2); font-size: 16px; }
@@ -78,7 +76,7 @@ a { color: var(--accent); }
 .fact span { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
 .fact em { font-style: normal; color: var(--accent); font-weight: 600; }
 
-/* Controls: search, two selects, watchlist chip, tabs, count. */
+/* Controls. */
 .controls {
   display: flex; flex-wrap: wrap; align-items: end; gap: var(--s3);
   padding: var(--s4) 0;
@@ -206,7 +204,7 @@ tr.top2 .rank-badge, tr.top3 .rank-badge { background: var(--accent); border-col
 }
 .driver { margin-top: var(--s3); padding: var(--s3) var(--s4); background: var(--accent-soft); border-radius: var(--radius-control); font-size: 13.5px; color: var(--ink-soft); }
 
-/* Radar-4: top farm picks. */
+/* Top farm picks. */
 .picks { margin-top: var(--s4); padding: var(--s4) var(--s5); display: grid; gap: var(--s2); }
 .picks > p { color: var(--muted); font-size: 13.5px; }
 .picks ol { margin: 0; padding: 0; list-style: none; }
@@ -217,7 +215,7 @@ tr.top2 .rank-badge, tr.top3 .rank-badge { background: var(--accent); border-col
 .pick-name .sub { color: var(--muted); font-size: 12px; }
 .pick-gas { color: var(--muted); }
 
-/* Radar-3: fitted-curve strip, fit chart, out-of-sample table, rank ranges. */
+/* Fitted-curve strip. */
 .fit-strip {
   margin-top: var(--s4); padding: var(--s3) var(--s4); background: var(--surface);
   border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-control);

@@ -1,4 +1,4 @@
-// The token radar's model (radar-4): one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-5): one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and every
 // other protocol that passes the same exclusion test the watchlist was built from: the early rows the
@@ -105,7 +105,7 @@
 // the house's watchlist itself. A below-floor protocol whose parent the snapshot does not name could
 // still slip in; the board therefore says a protocol "records no token", never that it has none.
 //
-// CONTRACT (radar-4) — the dashboard's app.js mirrors this byte-for-byte; change one, change both:
+// CONTRACT (radar-5) — the dashboard's app.js mirrors this byte-for-byte; change one, change both:
 //   ModelConstants fields: intercept, slope, chainEthereum, chainBinance, chainBase,
 //     chainSolana, chainArbitrum, comp_count. The five chain fields are the ridge-shrunk
 //     first-chain offsets (penalty 10, see CHAIN_RIDGE); a chain not among the five has offset 0.
@@ -138,14 +138,16 @@
 //     between the two-thirds and two-thirds-plus-one values; RadarData.farm_cutoffs publishes
 //     them, so the page uses the same numbers): at or above hi FARM (full capital, weekly actions
 //     over the whole hold); at or above lo THIN (capital halved, minimum $25, two qualifying actions in
-//     the first 30 days, gas = 6 transactions); below lo SKIP (no deposit, $0 spent, the step
-//     states the gas the plan would have cost). Two one-tier demotions, each at most once:
-//     stale — age_days >= 1095 (3 years listed, still records no token); gas-drag — the full
-//     plan's gas exceeds the capital tier. SKIP is priority triage under limited capital, not
-//     "uneconomic": on this snapshot every gas bill is under 1/57,000 of implied value. The last
-//     step always nets the plan: gas spent, capital returned on exit, days locked, implied value,
-//     implied value per $1 of capital, the tercile cutoffs, every demotion that fired, and the
-//     verdict.
+//     the first 30 days, gas = 6 transactions); below lo SKIP (no deposit now, $0 spent — a watch
+//     plan, not an empty one: the step states the exact implied-value trigger that promotes the
+//     row to THIN (lo x capital, or hi x capital when one demotion caps it at THIN; no trigger
+//     when two demotions cap it at SKIP), and the exact farm steps to take the week it fires,
+//     THIN-sized). Two one-tier demotions, each at most once: stale — age_days >= 1095 (3 years
+//     listed, still records no token); gas-drag — the full plan's gas exceeds the capital tier.
+//     SKIP is priority triage under limited capital, not "uneconomic": on this snapshot every gas
+//     bill is under 1/57,000 of implied value. The last step always nets the plan: gas spent,
+//     capital returned on exit, days locked, implied value, implied value per $1 of capital, the
+//     tercile cutoffs, every demotion that fired, and the verdict.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -205,7 +207,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 
 /** How many live-token comparables the fit needs before it trusts the curve. */
 export const CALIBRATION_MIN_COMPS = 5;
@@ -852,14 +854,15 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
  * value per $1 of capital against the board's own tercile cutoffs (see farmCutoffs and
  * farmVerdict): top third FARM (full capital, weekly actions over the whole hold), middle third
  * THIN (capital halved, minimum $25, two qualifying actions in the first 30 days, 6
- * transactions of gas), bottom third SKIP (no deposit, $0 spent, the step states the gas the
- * plan would have cost). Two one-tier demotions, each at most once: stale (listed >= 1095 days,
- * still records no token) and gas-drag (the full plan's gas exceeds the capital tier). SKIP is
- * priority triage under limited capital, not "uneconomic": on this snapshot the dearest gas
- * bill is still under 1/57,000 of the smallest implied value. The last step always nets the
- * plan and states the reason: gas spent, capital returned on exit, days locked, implied value,
- * implied value per $1 of capital, the tercile cutoffs, every demotion that fired, and the
- * verdict.
+ * transactions of gas), bottom third SKIP (no deposit now, $0 spent — a watch plan: the step
+ * states the exact implied-value trigger that promotes the row to THIN and the exact farm
+ * steps to take the week it fires, THIN-sized; no trigger when two demotions cap it at SKIP).
+ * Two one-tier demotions, each at most once: stale (listed >= 1095 days, still records no
+ * token) and gas-drag (the full plan's gas exceeds the capital tier). SKIP is priority triage
+ * under limited capital, not "uneconomic": on this snapshot the dearest gas bill is still under
+ * 1/57,000 of the smallest implied value. The last step always nets the plan and states the
+ * reason: gas spent, capital returned on exit, days locked, implied value, implied value per $1
+ * of capital, the tercile cutoffs, every demotion that fired, and the verdict.
  *
  * Deliberately identical to the dashboard's own derivation (dashboard/app.js farmSteps): the page
  * recomputes this plan for its detail view, so any change here must be made there in the same edit
@@ -954,11 +957,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, implied: numb
   const action = actionFor(p, deposit, chain);
   const tierWord = v.base === 'FARM' ? 'top' : v.base === 'THIN' ? 'middle' : 'bottom';
   const reason =
-    `${usd(Math.round(impPerCap))} of implied value per $1 of capital — ${tierWord} third of the board (thirds at ${usd(Math.round(cutoffs.lo))} and ${usd(Math.round(cutoffs.hi))})` +
+    `${usd(Math.round(impPerCap))} implied per $1 — ${tierWord} third (thirds at ${usd(Math.round(cutoffs.lo))} and ${usd(Math.round(cutoffs.hi))})` +
     (v.stale && age !== null
-      ? ` Listed ${age.toLocaleString('en-US')} days ago, still no token: verdict drops one tier`
+      ? ` Listed ${age.toLocaleString('en-US')}d ago, still no token: drops one tier`
       : '') +
-    (v.gasDrag ? ` Gas ${money(fullGas)} exceeds the ${usd(capital)} deposit: verdict drops one tier` : '');
+    (v.gasDrag ? ` Gas ${money(fullGas)} exceeds the ${usd(capital)} deposit: drops one tier` : '');
 
   const steps: FarmStep[] = [
     {
@@ -968,33 +971,51 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, implied: numb
     },
   ];
   if (verdict === 'SKIP') {
+    // Watch + trigger: no capital now, but a concrete level that promotes the row.
+    // The trigger is the implied value that lifts the verdict to THIN, accounting for the
+    // demotions: with none, the base tier must reach THIN (lo x capital); with one, the base
+    // must reach FARM (hi x capital) so one demotion still leaves THIN; with two, no implied
+    // value promotes the row, so there is no trigger. The fired plan is THIN-sized, since the
+    // row reaches THIN first.
+    const demotions = (v.stale ? 1 : 0) + (v.gasDrag ? 1 : 0);
+    const thinTrigger = demotions === 0 ? Math.round(cutoffs.lo * capital) : Math.round(cutoffs.hi * capital);
+    const demoteName = v.stale && v.gasDrag ? 'staleness and gas-drag' : v.stale ? 'staleness' : 'gas-drag';
+    const thinDeposit = Math.max(25, Math.round(capital / 2));
+    const thinAction = actionFor(p, thinDeposit, chain);
+    const triggerText =
+      demotions === 0
+        ? `Trigger: THIN at ${usd(thinTrigger)} implied (${usd(Math.round(cutoffs.lo))} per $1); FARM at ${usd(Math.round(cutoffs.hi * capital))} (${usd(Math.round(cutoffs.hi))} per $1).`
+        : demotions === 1
+          ? `Trigger: THIN at ${usd(thinTrigger)} implied (${usd(Math.round(cutoffs.hi))} per $1). The ${demoteName} demotion caps this row at THIN.`
+          : `No trigger: the ${demoteName} demotions cap this row at SKIP. Watch for a token launch instead.`;
+    const netClose = demotions < 2 ? 'watch the trigger above and farm it the week it fires' : 'watch for a token launch instead';
     steps.push({
-      text: `Do not deposit: the verdict below is SKIP, so no position is funded and no capital leaves the wallet.`,
+      text: `Watch, do not deposit: no capital goes in now. Check the TVL and any token-launch signal each week — the next step is the level that changes it.`,
       cost: '$0.00, no deposit',
+      time: '5 minutes a week',
+    });
+    steps.push({
+      text: triggerText,
+      cost: '$0.00, nothing to spend',
       time: '0 minutes',
     });
     steps.push({
-      text: `No weekly actions: the position was never funded, so there is nothing to qualify.`,
-      cost: '$0.00, no gas',
-      time: '0 minutes',
+      text: `If the row promotes to THIN, farm it small: ${thinAction} Then make two qualifying actions in the first 30 days, then stop.`,
+      cost: `${usd(thinDeposit)} of capital and about ${money(2 * gas)} of gas (2 transactions)`,
+      time: '15 minutes to set up',
     });
     steps.push({
-      text: `Nothing is locked: no capital left the wallet, so there is no hold to wait out.`,
-      cost: '$0.00 locked',
-      time: '0 days',
+      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`,
+      cost: `the ${usd(thinDeposit)} stays in the position`,
+      time: `${hold} days`,
     });
     steps.push({
-      text: `No claim to check: nothing was farmed, so there is no points page to watch.`,
-      cost: '$0.00, nothing to claim',
-      time: '0 minutes',
+      text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`,
+      cost: `nothing to check, about ${money(gas)} of gas to claim`,
+      time: '10 minutes',
     });
     steps.push({
-      text: `Log the skip: write the protocol, the date and the reason in a farm log, and check the plan again if its implied value rises.`,
-      cost: '$0.00, nothing but the log',
-      time: '5 minutes',
-    });
-    steps.push({
-      text: `Net: ${money(0)} spent, ${usd(0)} locked, 0 days held. Implied value ${usd(implied)} — the gas the plan would have cost, ${money(fullGas)}, is 1 in ${ratio} of it. ${reason}. Verdict: SKIP — with limited capital, farm the rows above it first; the gas bill is small, so the constraint is capital and attention, not gas.`,
+      text: `Net: ${money(0)} spent now, ${usd(0)} locked, 0 days held. Implied value ${usd(implied)} — the gas the plan would have cost, ${money(fullGas)}, is 1 in ${ratio} of it. ${reason}. Verdict: SKIP — with limited capital, farm the rows above it first; ${netClose}.`,
       cost: `${money(0)} total`,
       time: '0 minutes',
     });
